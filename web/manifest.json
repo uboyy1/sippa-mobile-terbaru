@@ -1,11 +1,11 @@
 {
-    "name": "sippa_mobile",
-    "short_name": "sippa_mobile",
+    "name": "SIPPA",
+    "short_name": "SIPPA",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFFFF",
+    "theme_color": "#D62818",
+    "description": "SIPPA smart feeding and monitoring app.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

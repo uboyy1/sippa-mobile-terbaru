@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../widgets/responsive_content.dart';
 
 class RiwayatScreen extends StatefulWidget {
   const RiwayatScreen({super.key});
@@ -9,7 +10,7 @@ class RiwayatScreen extends StatefulWidget {
 }
 
 class _RiwayatScreenState extends State<RiwayatScreen> {
-  static const Color primary = Color(0xFFAF101A);
+  static const Color primary = Color(0xFFD62818);
   static const Color surfaceContainerLowest = Colors.white;
   static const Color surfaceContainerLow = Color(0xFFF6F3F2);
   static const Color surfaceContainerHighest = Color(0xFFE5E2E1);
@@ -37,18 +38,18 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.only(bottom: 120),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 24),
-            _buildSearchAndFilter(),
-            const SizedBox(height: 32),
-            _buildHariIniSection(),
-            const SizedBox(height: 40),
-            _buildKemarinSection(),
-            const SizedBox(height: 32),
-            _buildPromoBlock(),
-          ],
+        child: ResponsiveContent(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 24),
+              _buildSearchAndFilter(),
+              const SizedBox(height: 32),
+              _buildHariIniSection(),
+              const SizedBox(height: 40),
+              _buildKemarinSection(),
+            ],
+          ),
         ),
       ),
     );
@@ -59,79 +60,39 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
   // ─────────────────────────────────────────────
   Widget _buildSearchAndFilter() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        children: [
-          // Search Field
-          Expanded(
-            child: Container(
-              height: 56,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: surfaceContainerLowest,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.04),
-                    blurRadius: 32,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.search_rounded, color: outline, size: 22),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextField(
-                      decoration: InputDecoration(
-                        border: InputBorder.none,
-                        hintText: 'Cari riwayat...',
-                        hintStyle: GoogleFonts.inter(
-                          color: outline,
-                          fontSize: 14,
-                        ),
-                      ),
-                      style: GoogleFonts.inter(
-                        color: onSurface,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),
-                ],
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Container(
+        height: 56,
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: outlineVariant.withOpacity(0.7)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 28,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.search_rounded, color: outline, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  hintText: 'Cari riwayat...',
+                  hintStyle: GoogleFonts.inter(color: outline, fontSize: 14),
+                ),
+                style: GoogleFonts.inter(color: onSurface, fontSize: 14),
               ),
             ),
-          ),
-          const SizedBox(width: 12),
-          // Filter Button
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: () {},
-              borderRadius: BorderRadius.circular(16),
-              child: Ink(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: primary,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: primary.withOpacity(0.3),
-                      blurRadius: 16,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.tune_rounded,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -239,12 +200,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
           ),
         ),
         const SizedBox(width: 16),
-        Expanded(
-          child: Container(
-            height: 1,
-            color: surfaceContainerHighest,
-          ),
-        ),
+        Expanded(child: Container(height: 1, color: surfaceContainerHighest)),
       ],
     );
   }
@@ -271,7 +227,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
                   color: Colors.black.withOpacity(0.04),
                   blurRadius: 32,
                   offset: const Offset(0, 4),
-                )
+                ),
               ]
             : null,
       ),
@@ -319,10 +275,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
                   const SizedBox(height: 4),
                   Text(
                     desc,
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      color: outline,
-                    ),
+                    style: GoogleFonts.inter(fontSize: 12, color: outline),
                   ),
                 ],
               ),
@@ -343,84 +296,6 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // PROMO BLOCK
-  // ─────────────────────────────────────────────
-  Widget _buildPromoBlock() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: onSurface,
-          borderRadius: BorderRadius.circular(24),
-        ),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Optimalisasi\nNutrisi Ikan',
-                  style: GoogleFonts.manrope(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                    height: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Lihat analisis mendalam\nberdasarkan data mingguan Anda.',
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    color: Colors.white.withOpacity(0.6),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () {},
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 8),
-                    minimumSize: Size.zero,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                  child: Text(
-                    'LIHAT LAPORAN',
-                    style: GoogleFonts.inter(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            // Decorative elements
-            Positioned(
-              right: -40,
-              bottom: -40,
-              child: Container(
-                width: 150,
-                height: 150,
-                decoration: BoxDecoration(
-                  color: primary.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

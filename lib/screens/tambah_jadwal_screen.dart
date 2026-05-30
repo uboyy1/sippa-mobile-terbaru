@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
+import '../widgets/responsive_content.dart';
 
 // ============================================================
 //  COLOR CONSTANTS (matches HTML theme)
 // ============================================================
-const Color kPrimary = Color(0xFFAF101A);
+const Color kPrimary = Color(0xFFD62818);
 const Color kOnPrimary = Color(0xFFFFFFFF);
 const Color kBackground = Color(0xFFFCF9F8);
 const Color kSurfaceContainerLowest = Color(0xFFFFFFFF);
@@ -18,7 +19,9 @@ const Color kPrimaryFixed = Color(0xFFFFDAD6);
 //  TAMBAH JADWAL SCREEN
 // ============================================================
 class TambahJadwalScreen extends StatefulWidget {
-  const TambahJadwalScreen({super.key});
+  const TambahJadwalScreen({super.key, this.initialJadwal});
+
+  final Map<String, dynamic>? initialJadwal;
 
   @override
   State<TambahJadwalScreen> createState() => _TambahJadwalScreenState();
@@ -31,9 +34,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
 
   // 0 = Pakan + Air, 1 = Pakan Saja, 2 = Air Saja
   int _selectedJenis = 0;
-
-  double _porsiPakan = 200; // gram
-  double _volumeAir = 500; // ml
 
   // S M T W T F S  (index 0..6)
   final List<bool> _hariAktif = [true, true, true, true, true, false, false];
@@ -48,10 +48,36 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   @override
   void initState() {
     super.initState();
-    _hourController =
-        FixedExtentScrollController(initialItem: _selectedHour);
-    _minuteController =
-        FixedExtentScrollController(initialItem: _selectedMinute ~/ 5);
+    final initial = widget.initialJadwal;
+    if (initial != null) {
+      final time = (initial['time'] as String? ?? '06:30').split(':');
+      _selectedHour = int.tryParse(time.first) ?? 6;
+      _selectedMinute = time.length > 1 ? int.tryParse(time[1]) ?? 30 : 30;
+
+      final hasPakan = initial['pakan'] == true;
+      final hasAir = initial['air'] == true;
+      if (hasPakan && hasAir) {
+        _selectedJenis = 0;
+      } else if (hasPakan) {
+        _selectedJenis = 1;
+      } else {
+        _selectedJenis = 2;
+      }
+
+      final activeDays = initial['activeDays'];
+      if (activeDays is List && activeDays.length == 7) {
+        _hariAktif
+          ..clear()
+          ..addAll(activeDays.map((day) => day == true));
+      }
+      _ulangiSetiapMinggu =
+          initial['repeat'] == 'Setiap Minggu' ||
+          initial['repeat'] == 'Setiap Hari';
+    }
+    _hourController = FixedExtentScrollController(initialItem: _selectedHour);
+    _minuteController = FixedExtentScrollController(
+      initialItem: _selectedMinute ~/ 5,
+    );
   }
 
   @override
@@ -71,23 +97,21 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
       appBar: _buildAppBar(context),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildWaktuPemberian(),
-            const SizedBox(height: 20),
-            _buildJenisPemberian(),
-            const SizedBox(height: 20),
-            _buildPorsiPakan(),
-            const SizedBox(height: 20),
-            _buildVolumeAir(),
-            const SizedBox(height: 20),
-            _buildHariAktif(),
-            const SizedBox(height: 20),
-            _buildUlangi(),
-            const SizedBox(height: 32),
-            _buildActions(context),
-          ],
+        child: ResponsiveContent(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildWaktuPemberian(),
+              const SizedBox(height: 20),
+              _buildJenisPemberian(),
+              const SizedBox(height: 20),
+              _buildHariAktif(),
+              const SizedBox(height: 20),
+              _buildUlangi(),
+              const SizedBox(height: 32),
+              _buildActions(context),
+            ],
+          ),
         ),
       ),
     );
@@ -98,7 +122,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   // --------------------------------------------------------
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     return AppBar(
-      backgroundColor: const Color(0xFFB71C1C),
+      backgroundColor: const Color(0xFFD62818),
       foregroundColor: Colors.white,
       elevation: 0,
       centerTitle: true,
@@ -106,9 +130,9 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
         icon: const Icon(Icons.close),
         onPressed: () => Navigator.of(context).pop(),
       ),
-      title: const Text(
-        'Tambah Jadwal',
-        style: TextStyle(
+      title: Text(
+        widget.initialJadwal == null ? 'Tambah Jadwal' : 'Edit Jadwal',
+        style: const TextStyle(
           fontFamily: 'Manrope',
           fontWeight: FontWeight.w700,
           fontSize: 18,
@@ -176,8 +200,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                     controller: _minuteController,
                     itemCount: 12,
                     label: (i) => (i * 5).toString().padLeft(2, '0'),
-                    onChanged: (i) =>
-                        setState(() => _selectedMinute = i * 5),
+                    onChanged: (i) => setState(() => _selectedMinute = i * 5),
                   ),
                 ),
               ],
@@ -273,7 +296,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                                 color: kPrimary.withOpacity(0.2),
                                 blurRadius: 6,
                                 offset: const Offset(0, 2),
-                              )
+                              ),
                             ]
                           : [],
                     ),
@@ -301,213 +324,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   }
 
   // --------------------------------------------------------
-  //  SECTION 3 – PORSI PAKAN
-  // --------------------------------------------------------
-  Widget _buildPorsiPakan() {
-    final show = _selectedJenis == 0 || _selectedJenis == 1;
-    if (!show) return const SizedBox.shrink();
-    return _card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _labelHeader('Porsi Pakan (gram)',
-              icon: Icons.restaurant_outlined),
-          const SizedBox(height: 24),
-          _buildSlider(
-            value: _porsiPakan,
-            min: 50,
-            max: 500,
-            minLabel: '50g',
-            maxLabel: '500g',
-            bubbleLabel: '${_porsiPakan.round()}g',
-            onChanged: (v) => setState(() => _porsiPakan = v),
-          ),
-          const SizedBox(height: 16),
-          _buildStepper(
-            value: _porsiPakan,
-            unit: 'g',
-            step: 10,
-            min: 50,
-            max: 500,
-            onChanged: (v) => setState(() => _porsiPakan = v),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --------------------------------------------------------
-  //  SECTION 4 – VOLUME AIR
-  // --------------------------------------------------------
-  Widget _buildVolumeAir() {
-    final show = _selectedJenis == 0 || _selectedJenis == 2;
-    if (!show) return const SizedBox.shrink();
-    return _card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _labelHeader('Volume Air (ml)',
-              icon: Icons.water_drop_outlined),
-          const SizedBox(height: 24),
-          _buildSlider(
-            value: _volumeAir,
-            min: 100,
-            max: 1000,
-            minLabel: '100ml',
-            maxLabel: '1000ml',
-            bubbleLabel: '${_volumeAir.round()}ml',
-            onChanged: (v) => setState(() => _volumeAir = v),
-          ),
-          const SizedBox(height: 16),
-          _buildStepper(
-            value: _volumeAir,
-            unit: 'ml',
-            step: 50,
-            min: 100,
-            max: 1000,
-            onChanged: (v) => setState(() => _volumeAir = v),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --------------------------------------------------------
-  //  REUSABLE SLIDER
-  // --------------------------------------------------------
-  Widget _buildSlider({
-    required double value,
-    required double min,
-    required double max,
-    required String minLabel,
-    required String maxLabel,
-    required String bubbleLabel,
-    required ValueChanged<double> onChanged,
-  }) {
-    final pct = (value - min) / (max - min);
-    return Column(
-      children: [
-        // Slider
-        SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            activeTrackColor: kPrimary,
-            inactiveTrackColor: kSurfaceContainerHighest,
-            thumbColor: kSurfaceContainerLowest,
-            thumbShape:
-                const RoundSliderThumbShape(enabledThumbRadius: 12),
-            overlayColor: kPrimary.withOpacity(0.1),
-            trackHeight: 6,
-            valueIndicatorColor: kPrimary,
-            valueIndicatorTextStyle:
-                const TextStyle(color: kOnPrimary, fontWeight: FontWeight.w700),
-            showValueIndicator: ShowValueIndicator.always,
-          ),
-          child: Slider(
-            value: value,
-            min: min,
-            max: max,
-            label: bubbleLabel,
-            onChanged: onChanged,
-          ),
-        ),
-        // Min / Max labels
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(minLabel,
-                  style: const TextStyle(
-                      fontSize: 11, color: kOnSurfaceVariant)),
-              Text(maxLabel,
-                  style: const TextStyle(
-                      fontSize: 11, color: kOnSurfaceVariant)),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // --------------------------------------------------------
-  //  REUSABLE STEPPER
-  // --------------------------------------------------------
-  Widget _buildStepper({
-    required double value,
-    required String unit,
-    required double step,
-    required double min,
-    required double max,
-    required ValueChanged<double> onChanged,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: kSurfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          _stepperBtn(
-            icon: Icons.remove,
-            filled: false,
-            onTap: () {
-              if (value - step >= min) onChanged(value - step);
-            },
-          ),
-          Text(
-            '${value.round()}$unit',
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              fontFamily: 'Manrope',
-              color: kPrimary,
-            ),
-          ),
-          _stepperBtn(
-            icon: Icons.add,
-            filled: true,
-            onTap: () {
-              if (value + step <= max) onChanged(value + step);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _stepperBtn({
-    required IconData icon,
-    required bool filled,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 40,
-        height: 40,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: filled ? kPrimary : Colors.transparent,
-          border: filled ? null : Border.all(color: kPrimary, width: 1.5),
-          boxShadow: filled
-              ? [
-                  BoxShadow(
-                    color: kPrimary.withOpacity(0.2),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  )
-                ]
-              : null,
-        ),
-        child: Icon(icon,
-            size: 18, color: filled ? kOnPrimary : kPrimary),
-      ),
-    );
-  }
-
-  // --------------------------------------------------------
   //  SECTION 5 – HARI AKTIF
   // --------------------------------------------------------
   Widget _buildHariAktif() {
@@ -522,8 +338,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
             children: List.generate(7, (i) {
               final active = _hariAktif[i];
               return GestureDetector(
-                onTap: () =>
-                    setState(() => _hariAktif[i] = !_hariAktif[i]),
+                onTap: () => setState(() => _hariAktif[i] = !_hariAktif[i]),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: 38,
@@ -537,7 +352,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                               color: kPrimary.withOpacity(0.25),
                               blurRadius: 6,
                               offset: const Offset(0, 2),
-                            )
+                            ),
                           ]
                         : null,
                   ),
@@ -556,38 +371,68 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
             }),
           ),
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
             children: [
-              GestureDetector(
-                onTap: () =>
-                    setState(() => _hariAktif.fillRange(0, 7, true)),
-                child: const Text(
-                  'Pilih Semua',
-                  style: TextStyle(
-                    color: kPrimary,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                    decoration: TextDecoration.underline,
-                    decorationColor: kPrimary,
-                  ),
-                ),
+              _dayActionButton(
+                icon: Icons.done_all_rounded,
+                label: 'Pilih Semua',
+                isPrimary: true,
+                onTap: () => setState(() => _hariAktif.fillRange(0, 7, true)),
               ),
-              GestureDetector(
-                onTap: () =>
-                    setState(() => _hariAktif.fillRange(0, 7, false)),
-                child: const Text(
-                  'Hapus Semua',
-                  style: TextStyle(
-                    color: kOnSurfaceVariant,
-                    fontWeight: FontWeight.w500,
-                    fontSize: 13,
-                  ),
-                ),
+              _dayActionButton(
+                icon: Icons.clear_all_rounded,
+                label: 'Hapus Semua',
+                onTap: () => setState(() => _hariAktif.fillRange(0, 7, false)),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _dayActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool isPrimary = false,
+  }) {
+    return Material(
+      color: isPrimary ? kPrimary : kSurfaceContainerLowest,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: isPrimary ? kPrimary : kSurfaceContainerHighest,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isPrimary ? kOnPrimary : kOnSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: isPrimary ? kOnPrimary : kOnSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -643,7 +488,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
               shadowColor: kPrimary.withOpacity(0.3),
             ),
             child: const Text(
-              'SIMPAN JADWAL',
+              'Simpan Jadwal',
               style: TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 15,
@@ -666,10 +511,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
             ),
             child: const Text(
               'Batalkan',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 15,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
             ),
           ),
         ),
@@ -685,31 +527,37 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     for (int i = 0; i < 7; i++) {
       if (_hariAktif[i]) aktif.add(_hariLabel[i]);
     }
+    final time =
+        '${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}';
+    final result = {
+      'time': time,
+      'repeat': _ulangiSetiapMinggu ? 'Setiap Minggu' : 'Khusus',
+      'pakan': _selectedJenis == 0 || _selectedJenis == 1,
+      'air': _selectedJenis == 0 || _selectedJenis == 2,
+      'days': List<String>.from(_hariLabel),
+      'activeDays': List<bool>.from(_hariAktif),
+      'isActive': true,
+    };
 
     debugPrint('=== Simpan Jadwal ===');
+    debugPrint('Waktu : $time');
     debugPrint(
-        'Waktu : ${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}');
-    debugPrint('Jenis : ${['Pakan + Air', 'Pakan Saja', 'Air Saja'][_selectedJenis]}');
-    if (_selectedJenis != 2)
-      debugPrint('Pakan : ${_porsiPakan.round()}g');
-    if (_selectedJenis != 1)
-      debugPrint('Air   : ${_volumeAir.round()}ml');
+      'Jenis : ${['Pakan + Air', 'Pakan Saja', 'Air Saja'][_selectedJenis]}',
+    );
+    debugPrint('Mode  : Isi otomatis sampai penuh');
     debugPrint('Hari  : ${aktif.join(', ')}');
     debugPrint('Ulangi: $_ulangiSetiapMinggu');
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          'Jadwal ${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')} berhasil disimpan!',
-        ),
+        content: Text('Jadwal $time berhasil disimpan!'),
         backgroundColor: kPrimary,
         behavior: SnackBarBehavior.floating,
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
 
-    Navigator.of(context).pop();
+    Navigator.of(context).pop(result);
   }
 
   // --------------------------------------------------------
@@ -718,18 +566,17 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   Widget _card({required Widget child, EdgeInsetsGeometry? padding}) {
     return Container(
       width: double.infinity,
-      padding: padding ??
-          const EdgeInsets.all(20),
+      padding: padding ?? const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: kSurfaceContainerLowest,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: kSurfaceContainerLow),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFAF101A).withOpacity(0.04),
+            color: const Color(0xFFD62818).withOpacity(0.04),
             blurRadius: 24,
             offset: const Offset(0, 6),
-          )
+          ),
         ],
       ),
       child: child,

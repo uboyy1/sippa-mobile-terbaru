@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../controllers/profile_controller.dart';
+import '../models/user_profile.dart';
+import 'edit_profile_screen.dart';
+import '../widgets/responsive_content.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -10,20 +15,15 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // Color Palette dari Tailwind Config
-  static const Color primary = Color(0xFFAF101A);
-  static const Color primaryContainer = Color(0xFFD32F2F);
+  static const Color primary = Color(0xFFD62818);
   static const Color primaryFixed = Color(0xFFFFDAD6);
   static const Color surfaceContainerLowest = Colors.white;
-  static const Color surfaceContainerLow = Color(0xFFF6F3F2);
   static const Color surfaceContainer = Color(0xFFF0EDED);
-  static const Color surfaceContainerHigh = Color(0xFFEAE7E7); // <-- Variabel yang ditambahkan
+  static const Color surfaceContainerHigh = Color(0xFFEAE7E7);
   static const Color onSurface = Color(0xFF1B1C1C);
   static const Color onSurfaceVariant = Color(0xFF5B403D);
   static const Color error = Color(0xFFBA1A1A);
-  static const Color errorContainer = Color(0xFFFFDAD6);
 
-  // State untuk Notifikasi (Toggle Switch)
   bool _notifPakanHabis = true;
   bool _notifSuhu = true;
   bool _notifJadwal = false;
@@ -32,10 +32,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFCF9F8), // background
+      backgroundColor: const Color(0xFFFCF9F8),
       appBar: AppBar(
-        automaticallyImplyLeading: false, // Menghilangkan tombol back
-        backgroundColor: const Color(0xFFB71C1C),
+        automaticallyImplyLeading: false,
+        backgroundColor: primary,
         foregroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -49,29 +49,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32).copyWith(bottom: 120),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildProfileSection(),
-            const SizedBox(height: 48),
-            _buildPerangkatSection(),
-            const SizedBox(height: 32),
-            _buildNotifikasiSection(),
-            const SizedBox(height: 32),
-            _buildAmbangBatasSection(),
-            const SizedBox(height: 32),
-            _buildAkunSection(),
-          ],
+        padding: const EdgeInsets.symmetric(
+          horizontal: 24,
+          vertical: 32,
+        ).copyWith(bottom: 120),
+        child: ResponsiveContent(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ValueListenableBuilder<UserProfile>(
+                valueListenable: ProfileController.profile,
+                builder: (context, profile, _) => _buildProfileSection(profile),
+              ),
+              const SizedBox(height: 48),
+              _buildPerangkatSection(),
+              const SizedBox(height: 32),
+              _buildNotifikasiSection(),
+              const SizedBox(height: 32),
+              _buildAkunSection(),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // ─────────────────────────────────────────────
-  // PROFILE SECTION
-  // ─────────────────────────────────────────────
-  Widget _buildProfileSection() {
+  Widget _buildProfileSection(UserProfile profile) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -98,7 +101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             child: Center(
               child: Text(
-                'PN',
+                profile.initials,
                 style: GoogleFonts.manrope(
                   fontSize: 32,
                   fontWeight: FontWeight.w900,
@@ -109,7 +112,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'Pak Nurhadi',
+            profile.name,
             style: GoogleFonts.manrope(
               fontSize: 22,
               fontWeight: FontWeight.w800,
@@ -118,15 +121,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'nurhadi@farm.com',
-            style: GoogleFonts.inter(
-              fontSize: 14,
-              color: onSurfaceVariant,
-            ),
+            profile.email,
+            style: GoogleFonts.inter(fontSize: 14, color: onSurfaceVariant),
           ),
           const SizedBox(height: 20),
           OutlinedButton(
-            onPressed: () {},
+            onPressed: _openEditProfile,
             style: OutlinedButton.styleFrom(
               foregroundColor: primary,
               side: const BorderSide(color: primary, width: 2),
@@ -148,9 +148,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // PERANGKAT SECTION
-  // ─────────────────────────────────────────────
   Widget _buildPerangkatSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -165,13 +162,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   Text(
                     'ESP32',
-                    style: GoogleFonts.inter(fontSize: 13, color: onSurfaceVariant),
+                    style: GoogleFonts.inter(
+                      fontSize: 13,
+                      color: onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFDCFCE7), // green-100
+                      color: const Color(0xFFDCFCE7),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Row(
@@ -180,7 +183,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           width: 6,
                           height: 6,
                           decoration: const BoxDecoration(
-                            color: Color(0xFF22C55E), // green-500
+                            color: Color(0xFF22C55E),
                             shape: BoxShape.circle,
                           ),
                         ),
@@ -190,7 +193,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           style: GoogleFonts.inter(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: const Color(0xFF166534), // green-800
+                            color: const Color(0xFF166534),
                           ),
                         ),
                       ],
@@ -201,11 +204,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             _buildListTile(
               title: 'ID Perangkat',
+              onTap: _copyDeviceId,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
                     decoration: BoxDecoration(
                       color: surfaceContainer,
                       borderRadius: BorderRadius.circular(6),
@@ -219,28 +226,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.content_copy_rounded, size: 20, color: onSurfaceVariant),
+                  const Icon(
+                    Icons.content_copy_rounded,
+                    size: 20,
+                    color: onSurfaceVariant,
+                  ),
                 ],
               ),
             ),
             _buildListTile(
               title: 'Interval Pembaruan Data',
+              onTap: _showIntervalSheet,
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     '5 detik',
-                    style: GoogleFonts.inter(fontSize: 14, color: onSurfaceVariant),
+                    style: GoogleFonts.inter(
+                      fontSize: 14,
+                      color: onSurfaceVariant,
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  const Icon(Icons.chevron_right_rounded, size: 24, color: onSurfaceVariant),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    size: 24,
+                    color: onSurfaceVariant,
+                  ),
                 ],
               ),
-            ),
-            _buildListTile(
-              title: 'Tambah Perangkat',
-              titleColor: primary,
-              trailing: const Icon(Icons.chevron_right_rounded, size: 24, color: primary),
             ),
           ],
         ),
@@ -248,9 +262,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // NOTIFIKASI SECTION
-  // ─────────────────────────────────────────────
   Widget _buildNotifikasiSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -259,12 +270,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _buildCardContainer(
           children: [
             _buildSwitchTile(
-              title: 'Notifikasi Pakan Habis',
+              title: 'Notifikasi Pakan dan Air Habis',
               value: _notifPakanHabis,
               onChanged: (val) => setState(() => _notifPakanHabis = val),
             ),
             _buildSwitchTile(
-              title: 'Peringatan Suhu',
+              title: 'Peringatan Suhu dan Kelembaban',
               value: _notifSuhu,
               onChanged: (val) => setState(() => _notifSuhu = val),
             ),
@@ -284,37 +295,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // AMBANG BATAS SECTION
-  // ─────────────────────────────────────────────
-  Widget _buildAmbangBatasSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(Icons.speed_rounded, 'Batas Peringatan'),
-        _buildCardContainer(
-          children: [
-            _buildListTile(
-              title: 'Batas Stok Pakan Minimum',
-              trailing: _buildHighlightBadge('20%'),
-            ),
-            _buildListTile(
-              title: 'Batas Suhu Maksimum',
-              trailing: _buildHighlightBadge('32°C'),
-            ),
-            _buildListTile(
-              title: 'Batas Kelembapan',
-              trailing: _buildHighlightBadge('80%'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // AKUN SECTION
-  // ─────────────────────────────────────────────
   Widget _buildAkunSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -324,22 +304,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             _buildListTile(
               title: 'Keamanan',
-              trailing: const Icon(Icons.chevron_right_rounded, size: 24, color: onSurfaceVariant),
+              onTap: () => _showInfoDialog(
+                'Keamanan',
+                'Pengaturan keamanan akun SIPPA aktif. Fitur ubah kata sandi dan autentikasi perangkat siap dikembangkan ke backend.',
+              ),
+              trailing: const Icon(
+                Icons.chevron_right_rounded,
+                size: 24,
+                color: onSurfaceVariant,
+              ),
             ),
             _buildListTile(
               title: 'Bantuan & FAQ',
-              trailing: const Icon(Icons.chevron_right_rounded, size: 24, color: onSurfaceVariant),
+              onTap: () => _showInfoDialog(
+                'Bantuan & FAQ',
+                'Gunakan menu Kontrol untuk aksi manual, Jadwal untuk otomatisasi pakan dan air, serta Notifikasi untuk memantau kondisi perangkat.',
+              ),
+              trailing: const Icon(
+                Icons.chevron_right_rounded,
+                size: 24,
+                color: onSurfaceVariant,
+              ),
             ),
             _buildListTile(
               title: 'Tentang SIPPA',
+              onTap: () => _showInfoDialog(
+                'Tentang SIPPA',
+                'SIPPA membantu pemantauan dan pemberian pakan berbasis IoT untuk kandang yang lebih terukur.',
+              ),
               trailing: Text(
                 'Versi 1.0.0',
                 style: GoogleFonts.inter(fontSize: 14, color: onSurfaceVariant),
               ),
             ),
-            // Tombol Keluar
             InkWell(
-              onTap: () {},
+              onTap: _confirmLogout,
               borderRadius: BorderRadius.circular(8),
               child: Container(
                 width: double.infinity,
@@ -358,16 +357,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
               ),
-            )
+            ),
           ],
         ),
       ],
     );
   }
 
-  // ─────────────────────────────────────────────
-  // HELPERS COMPONENT
-  // ─────────────────────────────────────────────
   Widget _buildSectionHeader(IconData icon, String title) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -402,9 +398,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ],
       ),
-      child: Column(
-        children: children,
-      ),
+      child: Column(children: children),
     );
   }
 
@@ -422,14 +416,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              title,
-              style: GoogleFonts.inter(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: titleColor,
+            Expanded(
+              child: Text(
+                title,
+                style: GoogleFonts.inter(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: titleColor,
+                ),
               ),
             ),
+            const SizedBox(width: 16),
             trailing,
           ],
         ),
@@ -450,19 +447,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              title,
-              style: GoogleFonts.inter(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: onSurface,
+            Expanded(
+              child: Text(
+                title,
+                style: GoogleFonts.inter(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: onSurface,
+                ),
               ),
             ),
+            const SizedBox(width: 16),
             CupertinoSwitch(
               value: value,
               onChanged: onChanged,
               activeColor: primary,
-              trackColor: surfaceContainerHigh, // Error sebelumnya berasal dari sini
+              trackColor: surfaceContainerHigh,
             ),
           ],
         ),
@@ -470,20 +470,98 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildHighlightBadge(String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: primary.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
+  Future<void> _openEditProfile() async {
+    final updated = await Navigator.of(context).push<UserProfile>(
+      MaterialPageRoute(
+        builder: (_) =>
+            EditProfileScreen(profile: ProfileController.profile.value),
       ),
-      child: Text(
-        text,
-        style: GoogleFonts.manrope(
-          fontSize: 16,
-          fontWeight: FontWeight.bold,
-          color: primary,
-        ),
+    );
+
+    if (updated == null || !mounted) return;
+    ProfileController.profile.value = updated;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Profil berhasil diperbarui')));
+  }
+
+  void _copyDeviceId() {
+    Clipboard.setData(const ClipboardData(text: 'ESP32-SIPPA-001'));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('ID perangkat disalin')));
+  }
+
+  void _showIntervalSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _intervalOption('3 detik'),
+              _intervalOption('5 detik'),
+              _intervalOption('10 detik'),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _intervalOption(String value) {
+    return ListTile(
+      title: Text(value, style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+      trailing: value == '5 detik'
+          ? const Icon(Icons.check_rounded, color: primary)
+          : null,
+      onTap: () {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Interval diatur ke $value')));
+      },
+    );
+  }
+
+  void _showInfoDialog(String title, String message) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmLogout() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Keluar dari akun?'),
+        content: const Text('Anda akan kembali ke halaman splash SIPPA.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
+            },
+            child: const Text('Keluar'),
+          ),
+        ],
       ),
     );
   }

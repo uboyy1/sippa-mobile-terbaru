@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../controllers/profile_controller.dart';
+import '../models/user_profile.dart';
 import 'notifikasi_screen.dart';
 
 class CustomDrawer extends StatelessWidget {
@@ -8,7 +10,7 @@ class CustomDrawer extends StatelessWidget {
 
   const CustomDrawer({super.key, required this.onNavigateTab});
 
-  static const Color primary = Color(0xFFAF101A);
+  static const Color primary = Color(0xFFD62818);
   static const Color onSurface = Color(0xFF1B1C1C);
   static const Color onSurfaceVariant = Color(0xFF5B403D);
 
@@ -26,79 +28,61 @@ class CustomDrawer extends StatelessWidget {
             // ─────────────────────────────────────────────
             // HEADER PROFILE
             // ─────────────────────────────────────────────
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(
-                      color: primary,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: primary.withOpacity(0.3),
-                          blurRadius: 16,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        'PN',
-                        style: GoogleFonts.manrope(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Pak Nurhadi',
-                    style: GoogleFonts.manrope(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: onSurface,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  Text(
-                    'Administrator',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
+            ValueListenableBuilder<UserProfile>(
+              valueListenable: ProfileController.profile,
+              builder: (context, profile, _) {
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF22C55E), // Green 500
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          color: primary,
                           shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: primary.withOpacity(0.3),
+                              blurRadius: 16,
+                              offset: const Offset(0, 8),
+                            ),
+                          ],
+                        ),
+                        child: Center(
+                          child: Text(
+                            profile.initials,
+                            style: GoogleFonts.manrope(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(height: 16),
                       Text(
-                        'ACTIVE',
-                        style: GoogleFonts.inter(
-                          fontSize: 10,
+                        profile.name,
+                        style: GoogleFonts.manrope(
+                          fontSize: 20,
                           fontWeight: FontWeight.bold,
-                          letterSpacing: 1.5,
+                          color: onSurface,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      Text(
+                        profile.farmName,
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
                           color: onSurfaceVariant,
                         ),
                       ),
                     ],
                   ),
-                ],
-              ),
+                );
+              },
             ),
 
             // ─────────────────────────────────────────────
@@ -137,7 +121,7 @@ class CustomDrawer extends StatelessWidget {
                     icon: Icons.person_rounded,
                     label: 'Account',
                     onTap: () {
-                      onNavigateTab(3); // Pindah ke Tab Account
+                      onNavigateTab(4); // Pindah ke Tab Settings
                       Navigator.pop(context); // Tutup Drawer
                     },
                   ),
@@ -172,7 +156,7 @@ class CustomDrawer extends StatelessWidget {
                     label: 'Pengaturan',
                     onTap: () {
                       Navigator.pop(context);
-                      // TODO: Navigate ke halaman Pengaturan
+                      onNavigateTab(4);
                     },
                   ),
                   _drawerItem(

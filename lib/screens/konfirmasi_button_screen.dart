@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/responsive_content.dart';
 
 class KonfirmasiButtonScreen extends StatefulWidget {
   const KonfirmasiButtonScreen({super.key});
@@ -25,7 +26,12 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) {
         return Container(
-          padding: const EdgeInsets.only(top: 16, bottom: 40, left: 32, right: 32),
+          padding: const EdgeInsets.only(
+            top: 16,
+            bottom: 40,
+            left: 32,
+            right: 32,
+          ),
           decoration: const BoxDecoration(
             color: Color(0xFFFCF9F8), // surface
             borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
@@ -34,7 +40,7 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
                 color: Colors.black26,
                 blurRadius: 60,
                 offset: Offset(0, -20),
-              )
+              ),
             ],
           ),
           child: Column(
@@ -60,7 +66,7 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
                 ),
                 child: const Icon(
                   Icons.warning_rounded,
-                  color: Color(0xFFAF101A),
+                  color: Color(0xFFD62818),
                   size: 32,
                 ),
               ),
@@ -88,11 +94,13 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
                     height: 1.5,
                   ),
                   children: [
-                    const TextSpan(text: 'Apakah Anda yakin ingin memberi pakan sebanyak '),
+                    const TextSpan(
+                      text: 'Apakah Anda yakin ingin memberi pakan sebanyak ',
+                    ),
                     TextSpan(
                       text: '${_selectedWeight}g',
                       style: const TextStyle(
-                        color: Color(0xFFAF101A),
+                        color: Color(0xFFD62818),
                         fontWeight: FontWeight.bold,
                       ),
                     ),
@@ -105,22 +113,22 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
               ElevatedButton(
                 onPressed: () => Navigator.pop(context),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFAF101A),
+                  backgroundColor: const Color(0xFFD62818),
                   foregroundColor: Colors.white,
                   minimumSize: const Size(double.infinity, 64),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(20),
                   ),
                   elevation: 8,
-                  shadowColor: const Color(0xFFAF101A).withOpacity(0.5),
+                  shadowColor: const Color(0xFFD62818).withOpacity(0.5),
                 ),
                 child: const Text(
-                  'YA, BERI SEKARANG',
+                  'Ya, Beri Sekarang',
                   style: TextStyle(
                     fontFamily: 'Manrope',
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
+                    letterSpacing: 0,
                   ),
                 ),
               ),
@@ -138,12 +146,12 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
                   ),
                 ),
                 child: const Text(
-                  'BATAL',
+                  'Batal',
                   style: TextStyle(
                     fontFamily: 'Manrope',
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
+                    letterSpacing: 0,
                   ),
                 ),
               ),
@@ -159,7 +167,7 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFFCF9F8),
       appBar: AppBar(
-        backgroundColor: const Color(0xFFB71C1C),
+        backgroundColor: const Color(0xFFD62818),
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
@@ -178,313 +186,340 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-        child: Column(
-          children: [
-            // Device Status Card
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF6F3F2),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      // Status Dot
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFF10B981), // Emerald 500
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'ESP32 Terhubung',
-                        style: TextStyle(
-                          fontFamily: 'Inter',
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1B1C1C),
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE5E2E1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Text(
-                      '3ms latency',
-                      style: TextStyle(
-                        fontFamily: 'Inter',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF5B403D),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 32),
-
-            // Feed Now Section
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFFAF101A).withOpacity(0.04),
-                    blurRadius: 40,
-                    offset: const Offset(0, 12),
-                  )
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header
-                  Row(
-                    children: [
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF6F3F2),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.pets,
-                          color: Color(0xFFAF101A),
-                          size: 28,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Beri Pakan Sekarang',
-                            style: TextStyle(
-                              fontFamily: 'Manrope',
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1B1C1C),
-                              letterSpacing: -0.5,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: const [
-                              Text(
-                                'Stok Pakan ',
-                                style: TextStyle(
-                                  fontFamily: 'Inter',
-                                  fontSize: 13,
-                                  color: Color(0xFF5B403D),
-                                ),
-                              ),
-                              Text(
-                                '65%',
-                                style: TextStyle(
-                                  fontFamily: 'Inter',
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFFAF101A),
-                                ),
-                              ),
-                            ],
-                          )
-                        ],
-                      )
-                    ],
-                  ),
-                  const SizedBox(height: 32),
-
-                  // Progress Bar
-                  Container(
-                    height: 8,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF6F3F2),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: FractionallySizedBox(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: 0.65, // 65%
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFFAF101A), Color(0xFFD32F2F)],
-                          ),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-
-                  // Value Selector
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF6F3F2),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        child: ResponsiveContent(
+          child: Column(
+            children: [
+              // Device Status Card
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF6F3F2),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
                       children: [
-                        InkWell(
-                          onTap: () => _updateWeight(-10),
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                            width: 56,
-                            height: 56,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE5E2E1),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: const Icon(Icons.remove, color: Color(0xFF1B1C1C)),
+                        // Status Dot
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF10B981), // Emerald 500
+                            shape: BoxShape.circle,
                           ),
                         ),
-                        RichText(
-                          text: TextSpan(
-                            text: '$_selectedWeight',
-                            style: const TextStyle(
-                              fontFamily: 'Manrope',
-                              fontSize: 40,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFFAF101A),
-                              letterSpacing: -1,
-                            ),
-                            children: const [
-                              TextSpan(
-                                text: 'g',
-                                style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF5B403D),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        InkWell(
-                          onTap: () => _updateWeight(10),
-                          borderRadius: BorderRadius.circular(16),
-                          child: Container(
-                            width: 56,
-                            height: 56,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE5E2E1),
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: const Icon(Icons.add, color: Color(0xFF1B1C1C)),
+                        const SizedBox(width: 12),
+                        const Text(
+                          'ESP32 Terhubung',
+                          style: TextStyle(
+                            fontFamily: 'Inter',
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF1B1C1C),
+                            letterSpacing: 0.5,
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 32),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE5E2E1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        '3ms latency',
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF5B403D),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
 
-                  // Presets
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: _presets.map((weight) {
-                        bool isSelected = _selectedWeight == weight;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 12),
-                          child: InkWell(
-                            onTap: () => setState(() => _selectedWeight = weight),
-                            borderRadius: BorderRadius.circular(30),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                              decoration: BoxDecoration(
-                                color: isSelected ? const Color(0xFFAF101A) : const Color(0xFFF6F3F2),
-                                borderRadius: BorderRadius.circular(30),
-                                boxShadow: isSelected
-                                    ? [
-                                        BoxShadow(
-                                          color: const Color(0xFFAF101A).withOpacity(0.25),
-                                          blurRadius: 20,
-                                          offset: const Offset(0, 8),
-                                        )
-                                      ]
-                                    : null,
+              // Feed Now Section
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFD62818).withOpacity(0.04),
+                      blurRadius: 40,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header
+                    Row(
+                      children: [
+                        Container(
+                          width: 56,
+                          height: 56,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFF6F3F2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.pets,
+                            color: Color(0xFFD62818),
+                            size: 28,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Beri Pakan Sekarang',
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1B1C1C),
+                                letterSpacing: -0.5,
                               ),
-                              child: Text(
-                                '${weight}g',
-                                style: TextStyle(
-                                  fontFamily: 'Inter',
-                                  fontSize: 14,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                                  color: isSelected ? Colors.white : const Color(0xFF5B403D),
-                                  letterSpacing: 0.5,
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: const [
+                                Text(
+                                  'Stok Pakan ',
+                                  style: TextStyle(
+                                    fontFamily: 'Inter',
+                                    fontSize: 13,
+                                    color: Color(0xFF5B403D),
+                                  ),
+                                ),
+                                Text(
+                                  '65%',
+                                  style: TextStyle(
+                                    fontFamily: 'Inter',
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFFD62818),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Progress Bar
+                    Container(
+                      height: 8,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF6F3F2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: 0.65, // 65%
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFFD62818), Color(0xFFE13A2A)],
+                            ),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+
+                    // Value Selector
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF6F3F2),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          InkWell(
+                            onTap: () => _updateWeight(-10),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE5E2E1),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Icon(
+                                Icons.remove,
+                                color: Color(0xFF1B1C1C),
+                              ),
+                            ),
+                          ),
+                          RichText(
+                            text: TextSpan(
+                              text: '$_selectedWeight',
+                              style: const TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 40,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFFD62818),
+                                letterSpacing: -1,
+                              ),
+                              children: const [
+                                TextSpan(
+                                  text: 'g',
+                                  style: TextStyle(
+                                    fontSize: 24,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF5B403D),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          InkWell(
+                            onTap: () => _updateWeight(10),
+                            borderRadius: BorderRadius.circular(16),
+                            child: Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE5E2E1),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: const Icon(
+                                Icons.add,
+                                color: Color(0xFF1B1C1C),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // Presets
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: _presets.map((weight) {
+                          bool isSelected = _selectedWeight == weight;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 12),
+                            child: InkWell(
+                              onTap: () =>
+                                  setState(() => _selectedWeight = weight),
+                              borderRadius: BorderRadius.circular(30),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? const Color(0xFFD62818)
+                                      : const Color(0xFFF6F3F2),
+                                  borderRadius: BorderRadius.circular(30),
+                                  boxShadow: isSelected
+                                      ? [
+                                          BoxShadow(
+                                            color: const Color(
+                                              0xFFD62818,
+                                            ).withOpacity(0.25),
+                                            blurRadius: 20,
+                                            offset: const Offset(0, 8),
+                                          ),
+                                        ]
+                                      : null,
+                                ),
+                                child: Text(
+                                  '${weight}g',
+                                  style: TextStyle(
+                                    fontFamily: 'Inter',
+                                    fontSize: 14,
+                                    fontWeight: isSelected
+                                        ? FontWeight.bold
+                                        : FontWeight.w600,
+                                    color: isSelected
+                                        ? Colors.white
+                                        : const Color(0xFF5B403D),
+                                    letterSpacing: 0.5,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        );
-                      }).toList(),
+                          );
+                        }).toList(),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 40),
+                    const SizedBox(height: 40),
 
-                  // CTA Button
-                  InkWell(
-                    onTap: _showConfirmationBottomSheet,
-                    borderRadius: BorderRadius.circular(20),
-                    child: Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFFAF101A), Color(0xFF8A0C14)],
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFFAF101A).withOpacity(0.3),
-                            blurRadius: 32,
-                            offset: const Offset(0, 16),
-                          )
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: const [
-                          Icon(Icons.restaurant, color: Colors.white, size: 24),
-                          SizedBox(width: 12),
-                          Text(
-                            'BERI PAKAN',
-                            style: TextStyle(
-                              fontFamily: 'Manrope',
-                              fontSize: 16,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                              letterSpacing: 1.5,
-                            ),
+                    // CTA Button
+                    InkWell(
+                      onTap: _showConfirmationBottomSheet,
+                      borderRadius: BorderRadius.circular(20),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFFD62818), Color(0xFFB91C12)],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
                           ),
-                        ],
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFD62818).withOpacity(0.3),
+                              blurRadius: 32,
+                              offset: const Offset(0, 16),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: const [
+                            Icon(
+                              Icons.restaurant,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                            SizedBox(width: 12),
+                            Text(
+                              'Beri Pakan',
+                              style: TextStyle(
+                                fontFamily: 'Manrope',
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                                letterSpacing: 0,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

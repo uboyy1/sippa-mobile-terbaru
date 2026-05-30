@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'tambah_jadwal_screen.dart';
+import '../widgets/responsive_content.dart';
 
 class ScheduleScreen extends StatefulWidget {
   const ScheduleScreen({super.key});
@@ -10,8 +11,8 @@ class ScheduleScreen extends StatefulWidget {
 }
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
-  static const Color primary = Color(0xFFAF101A);
-  static const Color primaryContainer = Color(0xFFD32F2F);
+  static const Color primary = Color(0xFFD62818);
+  static const Color primaryContainer = Color(0xFFE13A2A);
   static const Color surfaceContainerLowest = Colors.white;
   static const Color surfaceContainerHigh = Color(0xFFEAE7E7);
   static const Color surfaceVariant = Color(0xFFE5E2E1);
@@ -20,15 +21,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   static const Color outlineVariant = Color(0xFFE4BEBA);
 
   String _selectedDay = 'Semua';
-  final List<String> _days = ['Semua', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+  final List<String> _days = [
+    'Semua',
+    'Sen',
+    'Sel',
+    'Rab',
+    'Kam',
+    'Jum',
+    'Sab',
+    'Min',
+  ];
 
   // Data jadwal
   final List<Map<String, dynamic>> _jadwalHariIni = [
     {
       'time': '06:00',
       'repeat': 'Setiap Hari',
-      'pakan': '200g',
-      'air': '500ml',
+      'pakan': true,
+      'air': true,
       'days': ['S', 'S', 'R', 'K', 'J', 'S', 'M'],
       'activeDays': [true, true, true, true, true, true, true],
       'isActive': true,
@@ -36,8 +46,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     {
       'time': '12:00',
       'repeat': 'Setiap Hari',
-      'pakan': '150g',
-      'air': '400ml',
+      'pakan': true,
+      'air': false,
       'days': ['S', 'S', 'R', 'K', 'J', 'S', 'M'],
       'activeDays': [true, true, true, true, true, true, true],
       'isActive': true,
@@ -48,8 +58,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     {
       'time': '08:00',
       'repeat': 'Khusus',
-      'pakan': '300g',
-      'air': '600ml',
+      'pakan': false,
+      'air': true,
       'days': ['S', 'S', 'R', 'K', 'J', 'S', 'M'],
       'activeDays': [false, true, false, false, false, false, false],
       'isActive': false,
@@ -66,16 +76,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.only(bottom: 120),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 24),
-                  _buildSummaryStrip(),
-                  const SizedBox(height: 24),
-                  _buildDayFilter(),
-                  const SizedBox(height: 24),
-                  _buildJadwalList(),
-                ],
+              child: ResponsiveContent(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 24),
+                    _buildSummaryStrip(),
+                    const SizedBox(height: 24),
+                    _buildDayFilter(),
+                    const SizedBox(height: 24),
+                    _buildJadwalList(),
+                  ],
+                ),
               ),
             ),
           ),
@@ -93,22 +105,25 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       color: primary,
       padding: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + 12,
-        left: 24, // Padding kiri disesuaikan karena arrow back dihapus
-        right: 16,
         bottom: 16,
       ),
-      child: Row(
-        children: [
-          Text(
-            'Jadwal Pakan',
-            style: GoogleFonts.manrope(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
-              letterSpacing: -0.5,
-            ),
+      child: ResponsiveContent(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Row(
+            children: [
+              Text(
+                'Jadwal Pakan',
+                style: GoogleFonts.manrope(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -138,7 +153,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         ),
         child: Row(
           children: [
-            const Icon(Icons.calendar_today_rounded, color: Colors.white, size: 22),
+            const Icon(
+              Icons.calendar_today_rounded,
+              color: Colors.white,
+              size: 22,
+            ),
             const SizedBox(width: 12),
             Text(
               '5 Jadwal Aktif Hari Ini',
@@ -165,7 +184,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 24),
         itemCount: _days.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (context, index) => const SizedBox(width: 10),
         itemBuilder: (context, i) {
           final isSelected = _selectedDay == _days[i];
           return GestureDetector(
@@ -185,7 +204,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                           color: primary.withOpacity(0.2),
                           blurRadius: 16,
                           offset: const Offset(0, 8),
-                        )
+                        ),
                       ]
                     : [],
               ),
@@ -247,7 +266,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  Widget _buildJadwalCard(Map<String, dynamic> jadwal, bool isBesok, int index) {
+  Widget _buildJadwalCard(
+    Map<String, dynamic> jadwal,
+    bool isBesok,
+    int index,
+  ) {
     final bool isActive = jadwal['isActive'] as bool;
     final List<String> days = List<String>.from(jadwal['days']);
     final List<bool> activeDays = List<bool>.from(jadwal['activeDays']);
@@ -287,33 +310,43 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Time + Badge + Toggle
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    Wrap(
+                      spacing: 16,
+                      runSpacing: 12,
+                      alignment: WrapAlignment.spaceBetween,
+                      crossAxisAlignment: WrapCrossAlignment.start,
                       children: [
                         // Time & Badge
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
+                            Wrap(
+                              spacing: 10,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
                               children: [
                                 Text(
                                   jadwal['time'],
                                   style: GoogleFonts.manrope(
                                     fontSize: 30,
                                     fontWeight: FontWeight.w800,
-                                    color: isActive ? primary : onSurfaceVariant,
+                                    color: isActive
+                                        ? primary
+                                        : onSurfaceVariant,
                                     letterSpacing: -1,
                                   ),
                                 ),
-                                const SizedBox(width: 10),
                                 Container(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 10, vertical: 3),
+                                    horizontal: 10,
+                                    vertical: 3,
+                                  ),
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(999),
                                     border: Border.all(
-                                      color: isActive ? primary : outlineVariant,
+                                      color: isActive
+                                          ? primary
+                                          : outlineVariant,
                                     ),
                                   ),
                                   child: Text(
@@ -321,7 +354,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                     style: GoogleFonts.inter(
                                       fontSize: 10,
                                       fontWeight: FontWeight.w700,
-                                      color: isActive ? primary : onSurfaceVariant,
+                                      color: isActive
+                                          ? primary
+                                          : onSurfaceVariant,
                                       letterSpacing: 0.5,
                                     ),
                                   ),
@@ -341,7 +376,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                   if (isBesok) {
                                     _jadwalBesok[index]['isActive'] = !isActive;
                                   } else {
-                                    _jadwalHariIni[index]['isActive'] = !isActive;
+                                    _jadwalHariIni[index]['isActive'] =
+                                        !isActive;
                                   }
                                 });
                               },
@@ -371,10 +407,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                               ),
                             ),
                             const SizedBox(width: 4),
-                            Icon(
-                              Icons.more_vert_rounded,
-                              color: onSurfaceVariant,
-                              size: 22,
+                            Material(
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.circular(999),
+                              child: InkWell(
+                                onTap: () =>
+                                    _showJadwalActions(jadwal, isBesok, index),
+                                borderRadius: BorderRadius.circular(999),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(6),
+                                  child: Icon(
+                                    Icons.more_vert_rounded,
+                                    color: onSurfaceVariant,
+                                    size: 22,
+                                  ),
+                                ),
+                              ),
                             ),
                           ],
                         ),
@@ -384,40 +432,42 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     const SizedBox(height: 12),
 
                     // Pakan & Air Info
-                    Row(
+                    Wrap(
+                      spacing: 20,
+                      runSpacing: 8,
                       children: [
-                        _infoChip(Icons.scale_rounded, 'Pakan: ${jadwal['pakan']}'),
-                        const SizedBox(width: 20),
-                        _infoChip(Icons.water_drop_rounded, 'Air: ${jadwal['air']}'),
+                        if (jadwal['pakan'] == true)
+                          _infoChip(Icons.grain_rounded, 'Pakan'),
+                        if (jadwal['air'] == true)
+                          _infoChip(Icons.water_drop_rounded, 'Air'),
                       ],
                     ),
 
                     const SizedBox(height: 14),
 
                     // Day Pills
-                    Row(
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
                       children: List.generate(days.length, (i) {
                         final active = activeDays[i];
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Container(
-                            width: 30,
-                            height: 30,
-                            decoration: BoxDecoration(
-                              color: active ? primary : surfaceContainerHigh,
-                              shape: BoxShape.circle,
-                              border: active
-                                  ? null
-                                  : Border.all(color: outlineVariant),
-                            ),
-                            child: Center(
-                              child: Text(
-                                days[i],
-                                style: GoogleFonts.inter(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w700,
-                                  color: active ? Colors.white : onSurfaceVariant,
-                                ),
+                        return Container(
+                          width: 30,
+                          height: 30,
+                          decoration: BoxDecoration(
+                            color: active ? primary : surfaceContainerHigh,
+                            shape: BoxShape.circle,
+                            border: active
+                                ? null
+                                : Border.all(color: outlineVariant),
+                          ),
+                          child: Center(
+                            child: Text(
+                              days[i],
+                              style: GoogleFonts.inter(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: active ? Colors.white : onSurfaceVariant,
                               ),
                             ),
                           ),
@@ -441,12 +491,180 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         const SizedBox(width: 5),
         Text(
           label,
-          style: GoogleFonts.inter(
-            fontSize: 13,
-            color: onSurfaceVariant,
-          ),
+          style: GoogleFonts.inter(fontSize: 13, color: onSurfaceVariant),
         ),
       ],
+    );
+  }
+
+  Future<void> _showJadwalActions(
+    Map<String, dynamic> jadwal,
+    bool isBesok,
+    int index,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: surfaceContainerLowest,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.12),
+                  blurRadius: 32,
+                  offset: const Offset(0, 12),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 42,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: surfaceVariant,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                _scheduleActionTile(
+                  icon: Icons.edit_calendar_rounded,
+                  title: 'Edit Jadwal',
+                  subtitle: 'Ubah waktu, jenis pemberian, dan hari aktif',
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _editJadwal(jadwal, isBesok, index);
+                  },
+                ),
+                const SizedBox(height: 8),
+                _scheduleActionTile(
+                  icon: Icons.delete_outline_rounded,
+                  title: 'Hapus Jadwal',
+                  subtitle: 'Hapus jadwal ini dari daftar',
+                  isDanger: true,
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _deleteJadwal(isBesok, index);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _scheduleActionTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+    bool isDanger = false,
+  }) {
+    final color = isDanger ? primary : onSurface;
+    return Material(
+      color: isDanger ? primary.withOpacity(0.06) : const Color(0xFFFCF9F8),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: isDanger
+                      ? primary.withOpacity(0.12)
+                      : surfaceContainerLowest,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isDanger
+                        ? primary.withOpacity(0.18)
+                        : outlineVariant,
+                  ),
+                ),
+                child: Icon(icon, color: color, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: color,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: color, size: 22),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editJadwal(
+    Map<String, dynamic> jadwal,
+    bool isBesok,
+    int index,
+  ) async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => TambahJadwalScreen(initialJadwal: jadwal),
+      ),
+    );
+
+    if (!mounted || result == null) return;
+    setState(() {
+      if (isBesok) {
+        _jadwalBesok[index] = result;
+      } else {
+        _jadwalHariIni[index] = result;
+      }
+    });
+  }
+
+  void _deleteJadwal(bool isBesok, int index) {
+    setState(() {
+      if (isBesok) {
+        _jadwalBesok.removeAt(index);
+      } else {
+        _jadwalHariIni.removeAt(index);
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Jadwal berhasil dihapus'),
+        backgroundColor: primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
     );
   }
 
@@ -494,11 +712,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  void _navigateToTambahJadwal() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const TambahJadwalScreen(),
-      ),
+  Future<void> _navigateToTambahJadwal() async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(builder: (_) => const TambahJadwalScreen()),
     );
+
+    if (!mounted || result == null) return;
+    setState(() {
+      _jadwalHariIni.add(result);
+    });
   }
 }

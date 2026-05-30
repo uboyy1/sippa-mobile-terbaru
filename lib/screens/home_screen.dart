@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'notifikasi_screen.dart';
+import '../widgets/responsive_content.dart';
 
 // Pastikan riwayat_screen.dart sudah ada di folder yang sama
 // import 'riwayat_screen.dart';
@@ -21,15 +22,28 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  static const Color primary = Color(0xFFAF101A);
-  static const Color primaryContainer = Color(0xFFD32F2F);
-  static const Color secondaryContainer = Color(0xFFD93630);
+  static const Color primary = Color(0xFFD62818);
+  static const Color primaryContainer = Color(0xFFE13A2A);
+  static const Color warning = Color(0xFFF59E0B);
+  static const Color danger = Color(0xFFDC2626);
+  static const Color success = Color(0xFF16A34A);
   static const Color surfaceContainerLowest = Colors.white;
-  static const Color surfaceContainerLow = Color(0xFFF6F3F2);
   static const Color surfaceContainerHigh = Color(0xFFEAE7E7);
   static const Color onSurface = Color(0xFF1B1C1C);
   static const Color onSurfaceVariant = Color(0xFF5B403D);
   static const Color outlineVariant = Color(0xFFE4BEBA);
+
+  ({String label, Color color}) _temperatureStatus(int value) {
+    if (value >= 22 && value <= 25) return (label: 'Normal', color: success);
+    if (value >= 26 && value <= 29) return (label: 'Waspada', color: warning);
+    return (label: 'Bahaya', color: danger);
+  }
+
+  ({String label, Color color}) _humidityStatus(int value) {
+    if (value < 50) return (label: 'Terlalu Kering', color: warning);
+    if (value <= 70) return (label: 'Ideal', color: success);
+    return (label: 'Terlalu Lembab', color: danger);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,19 +56,21 @@ class _HomeScreenState extends State<HomeScreen> {
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.only(bottom: 100),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 24),
-                  _buildSectionStatusKandang(),
-                  const SizedBox(height: 32),
-                  _buildSectionGrafik(),
-                  const SizedBox(height: 32),
-                  _buildSectionAksiCepat(),
-                  const SizedBox(height: 32),
-                  _buildSectionJadwal(),
-                  const SizedBox(height: 24),
-                ],
+              child: ResponsiveContent(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 24),
+                    _buildSectionStatusKandang(),
+                    const SizedBox(height: 32),
+                    _buildSectionGrafik(),
+                    const SizedBox(height: 32),
+                    _buildSectionAksiCepat(),
+                    const SizedBox(height: 32),
+                    _buildSectionJadwal(),
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
             ),
           ),
@@ -65,64 +81,69 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildTopAppBar() {
     return Container(
-      color: const Color(0xFFB71C1C),
+      color: const Color(0xFFD62818),
       padding: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + 12,
-        left: 16,
-        right: 16,
         bottom: 16,
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          _iconButton(Icons.menu_rounded, onTap: widget.onMenuTap),
-          Text(
-            'SIPPA',
-            style: GoogleFonts.manrope(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
-              letterSpacing: 2,
-            ),
-          ),
-          Stack(
+      child: ResponsiveContent(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _iconButton(
-                Icons.notifications_outlined,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const NotifikasiScreen(),
-                    ),
-                  );
-                },
+              context.isDesktopWidth
+                  ? const SizedBox(width: 40)
+                  : _iconButton(Icons.menu_rounded, onTap: widget.onMenuTap),
+              Text(
+                'SIPPA',
+                style: GoogleFonts.manrope(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: 2,
+                ),
               ),
-              Positioned(
-                top: 4,
-                right: 4,
-                child: Container(
-                  width: 16,
-                  height: 16,
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
+              Stack(
+                children: [
+                  _iconButton(
+                    Icons.notifications_outlined,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const NotifikasiScreen(),
+                        ),
+                      );
+                    },
                   ),
-                  child: Center(
-                    child: Text(
-                      '2',
-                      style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                        color: primary,
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: Container(
+                      width: 16,
+                      height: 16,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '2',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: primary,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -145,40 +166,50 @@ class _HomeScreenState extends State<HomeScreen> {
     return Container(
       color: primaryContainer,
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: const Color(0xFF4ADE80),
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF4ADE80).withOpacity(0.5),
-                  blurRadius: 8,
-                  spreadRadius: 2,
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: ResponsiveContent(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4ADE80),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF4ADE80).withOpacity(0.5),
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Perangkat Terhubung',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Text(
-            'Perangkat Terhubung',
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Colors.white,
-              letterSpacing: 0.3,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildSectionStatusKandang() {
+    final suhu = 28;
+    final kelembaban = 64;
+    final suhuStatus = _temperatureStatus(suhu);
+    final kelembabanStatus = _humidityStatus(kelembaban);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -206,20 +237,35 @@ class _HomeScreenState extends State<HomeScreen> {
                 iconColor: primary,
                 borderColor: primary,
                 label: 'Suhu',
-                value: '28°C',
-                status: 'Normal',
+                value: '$suhu°C',
+                status: suhuStatus.label,
+                statusColor: suhuStatus.color,
               ),
               const SizedBox(width: 16),
               _statusCard(
                 icon: Icons.water_drop_rounded,
-                iconColor: secondaryContainer,
-                borderColor: secondaryContainer,
-                label: 'Kelembapan',
-                value: '72%',
-                status: 'Normal',
+                leadingIcon: _humidityIcon(),
+                iconColor: primary,
+                borderColor: primary,
+                label: 'Kelembaban',
+                value: '$kelembaban%',
+                status: kelembabanStatus.label,
+                statusColor: kelembabanStatus.color,
               ),
               const SizedBox(width: 16),
-              _statusCardStok(),
+              _stockCard(
+                icon: Icons.grain_rounded,
+                label: 'Stok Pakan',
+                percentage: 65,
+                amount: '3.2 kg',
+              ),
+              const SizedBox(width: 16),
+              _stockCard(
+                icon: Icons.water_drop_rounded,
+                label: 'Stok Air Minum',
+                percentage: 78,
+                amount: '12.4 liter',
+              ),
             ],
           ),
         ),
@@ -229,14 +275,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _statusCard({
     required IconData icon,
+    Widget? leadingIcon,
     required Color iconColor,
     required Color borderColor,
     required String label,
     required String value,
     required String status,
+    required Color statusColor,
   }) {
     return Container(
-      width: 145,
+      width: 168,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: surfaceContainerLowest,
@@ -244,7 +292,7 @@ class _HomeScreenState extends State<HomeScreen> {
         border: Border(left: BorderSide(color: borderColor, width: 4)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFAF101A).withOpacity(0.06),
+            color: const Color(0xFFD62818).withOpacity(0.06),
             blurRadius: 24,
             offset: const Offset(0, 4),
           ),
@@ -255,7 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Row(
             children: [
-              Icon(icon, color: iconColor, size: 18),
+              leadingIcon ?? Icon(icon, color: iconColor, size: 18),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -287,10 +335,12 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 4),
           Text(
             status,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: GoogleFonts.inter(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: const Color(0xFF16A34A),
+              color: statusColor,
             ),
           ),
         ],
@@ -298,9 +348,44 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _statusCardStok() {
+  Widget _humidityIcon() {
+    return SizedBox(
+      width: 20,
+      height: 20,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Positioned(
+            left: 0,
+            top: 1,
+            child: Icon(Icons.water_drop_rounded, color: primary, size: 17),
+          ),
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: 12,
+              height: 12,
+              decoration: const BoxDecoration(
+                color: surfaceContainerLowest,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.percent_rounded, color: primary, size: 9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _stockCard({
+    required IconData icon,
+    required String label,
+    required int percentage,
+    required String amount,
+  }) {
     return Container(
-      width: 165,
+      width: 168,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: surfaceContainerLowest,
@@ -308,7 +393,7 @@ class _HomeScreenState extends State<HomeScreen> {
         border: const Border(left: BorderSide(color: primary, width: 4)),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFAF101A).withOpacity(0.06),
+            color: const Color(0xFFD62818).withOpacity(0.06),
             blurRadius: 24,
             offset: const Offset(0, 4),
           ),
@@ -319,11 +404,11 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.scale_rounded, color: primary, size: 18),
+              Icon(icon, color: primary, size: 18),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'STOK PAKAN',
+                  label.toUpperCase(),
                   style: GoogleFonts.inter(
                     fontSize: 9,
                     fontWeight: FontWeight.w600,
@@ -336,48 +421,22 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const Spacer(),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '65%',
-                        style: GoogleFonts.manrope(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          color: onSurface,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '3.2 kg',
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        color: onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '$percentage%',
+              style: GoogleFonts.manrope(
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+                color: onSurface,
               ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 38,
-                height: 38,
-                child: CircularProgressIndicator(
-                  value: 0.65,
-                  strokeWidth: 4,
-                  backgroundColor: surfaceContainerHigh,
-                  valueColor: const AlwaysStoppedAnimation<Color>(primary),
-                ),
-              ),
-            ],
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            amount,
+            style: GoogleFonts.inter(fontSize: 11, color: onSurfaceVariant),
           ),
         ],
       ),
@@ -385,7 +444,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildSectionGrafik() {
-    final spots = [
+    final suhuSpots = [
       const FlSpot(0, 30),
       const FlSpot(2, 28),
       const FlSpot(4, 29),
@@ -400,141 +459,188 @@ class _HomeScreenState extends State<HomeScreen> {
       const FlSpot(22, 27),
       const FlSpot(24, 26),
     ];
+    final kelembabanSpots = [
+      const FlSpot(0, 58),
+      const FlSpot(2, 60),
+      const FlSpot(4, 62),
+      const FlSpot(6, 64),
+      const FlSpot(8, 66),
+      const FlSpot(10, 68),
+      const FlSpot(12, 72),
+      const FlSpot(14, 70),
+      const FlSpot(16, 67),
+      const FlSpot(18, 65),
+      const FlSpot(20, 63),
+      const FlSpot(22, 61),
+      const FlSpot(24, 60),
+    ];
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-        decoration: BoxDecoration(
-          color: surfaceContainerLowest,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: const Color(0xFFAF101A).withOpacity(0.04),
-              blurRadius: 32,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Tren Suhu 24 Jam',
-              style: GoogleFonts.manrope(
-                fontSize: 17,
-                fontWeight: FontWeight.w800,
-                color: onSurface,
-                letterSpacing: -0.3,
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              height: 160,
-              child: LineChart(
-                LineChartData(
-                  minX: 0,
-                  maxX: 24,
-                  minY: 22,
-                  maxY: 36,
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    getDrawingHorizontalLine: (value) => FlLine(
-                      color: outlineVariant.withOpacity(0.5),
-                      strokeWidth: 1,
-                    ),
-                  ),
-                  borderData: FlBorderData(
-                    show: true,
-                    border: Border(
-                      left: BorderSide(color: outlineVariant.withOpacity(0.5)),
-                      bottom: BorderSide(
-                        color: outlineVariant.withOpacity(0.5),
-                      ),
-                    ),
-                  ),
-                  titlesData: FlTitlesData(
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 36,
-                        interval: 5,
-                        getTitlesWidget: (val, _) => Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Text(
-                            '${val.toInt()}°',
-                            style: GoogleFonts.inter(
-                              fontSize: 10,
-                              color: onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 28,
-                        interval: 6,
-                        getTitlesWidget: (val, _) {
-                          final labels = {
-                            0.0: '00:00',
-                            6.0: '06:00',
-                            12.0: '12:00',
-                            18.0: '18:00',
-                            24.0: '24:00',
-                          };
-                          return Text(
-                            labels[val] ?? '',
-                            style: GoogleFonts.inter(
-                              fontSize: 9,
-                              color: onSurfaceVariant,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                  ),
-                  lineBarsData: [
-                    LineChartBarData(
-                      spots: spots,
-                      isCurved: true,
-                      color: primary,
-                      barWidth: 2.5,
-                      dotData: const FlDotData(show: false),
-                      belowBarData: BarAreaData(
-                        show: true,
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            primary.withOpacity(0.22),
-                            primary.withOpacity(0.0),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+      child: Column(
+        children: [
+          _lineChartCard(
+            title: 'Suhu Kandang 24 Jam',
+            spots: suhuSpots,
+            minY: 22,
+            maxY: 34,
+            interval: 2,
+            unit: '°',
+            color: const Color(0xFFF59E0B),
+          ),
+          const SizedBox(height: 20),
+          _lineChartCard(
+            title: 'Kelembaban Kandang 24 Jam',
+            spots: kelembabanSpots,
+            minY: 0,
+            maxY: 100,
+            interval: 20,
+            unit: '%',
+            color: const Color(0xFF1976D2),
+          ),
+        ],
       ),
     );
   }
 
-  // ─────────────────────────────────────────────────────────
+  Widget _lineChartCard({
+    required String title,
+    required List<FlSpot> spots,
+    required double minY,
+    required double maxY,
+    required double interval,
+    required String unit,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+      decoration: BoxDecoration(
+        color: surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFD62818).withOpacity(0.04),
+            blurRadius: 32,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.manrope(
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              color: onSurface,
+              letterSpacing: -0.3,
+            ),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            height: 160,
+            child: LineChart(
+              LineChartData(
+                minX: 0,
+                maxX: 24,
+                minY: minY,
+                maxY: maxY,
+                gridData: FlGridData(
+                  show: true,
+                  drawVerticalLine: false,
+                  getDrawingHorizontalLine: (value) => FlLine(
+                    color: outlineVariant.withOpacity(0.5),
+                    strokeWidth: 1,
+                  ),
+                ),
+                borderData: FlBorderData(
+                  show: true,
+                  border: Border(
+                    left: BorderSide(color: outlineVariant.withOpacity(0.5)),
+                    bottom: BorderSide(color: outlineVariant.withOpacity(0.5)),
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 40,
+                      interval: interval,
+                      getTitlesWidget: (val, _) => Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Text(
+                          '${val.toInt()}$unit',
+                          style: GoogleFonts.inter(
+                            fontSize: 10,
+                            color: onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 28,
+                      interval: 6,
+                      getTitlesWidget: (val, _) {
+                        final labels = {
+                          0.0: '00:00',
+                          6.0: '06:00',
+                          12.0: '12:00',
+                          18.0: '18:00',
+                          24.0: '24:00',
+                        };
+                        return Text(
+                          labels[val] ?? '',
+                          style: GoogleFonts.inter(
+                            fontSize: 9,
+                            color: onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                ),
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    isCurved: true,
+                    color: color,
+                    barWidth: 2.5,
+                    dotData: const FlDotData(show: false),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          color.withOpacity(0.22),
+                          color.withOpacity(0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --------------------------------------------------------
   // UPDATE PADA BAGIAN INI AGAR TOMBOL BERWARNA PUTIH
-  // ─────────────────────────────────────────────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   Widget _buildSectionAksiCepat() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -551,39 +657,40 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 16,
-            crossAxisSpacing: 16,
-            childAspectRatio: 1.5,
-            children: [
-              _aksiButton(
-                icon: Icons.restaurant_rounded,
-                label: 'Beri Pakan',
-                onTap: () =>
-                    widget.onNavigateTab(1), // Pindah ke Tab Kontrol (Index 1)
-              ),
-              _aksiButton(
-                icon: Icons.water_drop_rounded,
-                label: 'Beri Air',
-                onTap: () =>
-                    widget.onNavigateTab(1), // Pindah ke Tab Kontrol (Index 1)
-              ),
-              _aksiButton(
-                icon: Icons.calendar_today_rounded,
-                label: 'Atur Jadwal',
-                onTap: () =>
-                    widget.onNavigateTab(2), // Pindah ke Tab Schedule (Index 2)
-              ),
-              _aksiButton(
-                icon: Icons.history_rounded,
-                label: 'Riwayat',
-                onTap: () =>
-                    widget.onNavigateTab(3), // Pindah ke Tab Riwayat (Index 3)
-              ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final isWide = constraints.maxWidth >= 720;
+              return GridView.count(
+                crossAxisCount: isWide ? 4 : 2,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 14,
+                crossAxisSpacing: 14,
+                childAspectRatio: isWide ? 2.25 : 1.55,
+                children: [
+                  _aksiButton(
+                    icon: Icons.grain_rounded,
+                    label: 'Beri Pakan',
+                    onTap: () => widget.onNavigateTab(1),
+                  ),
+                  _aksiButton(
+                    icon: Icons.water_drop_rounded,
+                    label: 'Beri Air',
+                    onTap: () => widget.onNavigateTab(1),
+                  ),
+                  _aksiButton(
+                    icon: Icons.calendar_today_rounded,
+                    label: 'Atur Jadwal',
+                    onTap: () => widget.onNavigateTab(2),
+                  ),
+                  _aksiButton(
+                    icon: Icons.history_rounded,
+                    label: 'Riwayat',
+                    onTap: () => widget.onNavigateTab(3),
+                  ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -596,18 +703,18 @@ class _HomeScreenState extends State<HomeScreen> {
     required VoidCallback onTap,
   }) {
     return Material(
-      color: surfaceContainerLowest, // Warna latar belakang putih
-      borderRadius: BorderRadius.circular(16),
+      color: surfaceContainerLowest,
+      borderRadius: BorderRadius.circular(14),
       elevation: 0,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        // Efek cipratan (ripple) warna utama yang tipis
+        borderRadius: BorderRadius.circular(14),
         splashColor: primary.withOpacity(0.1),
         highlightColor: primary.withOpacity(0.05),
         child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(color: outlineVariant.withOpacity(0.5)),
             boxShadow: [
               BoxShadow(
@@ -620,18 +727,14 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 30,
-                color: primary,
-              ), // Ikon berwarna utama (Merah)
+              Icon(icon, size: 28, color: primary),
               const SizedBox(height: 8),
               Text(
                 label,
                 style: GoogleFonts.inter(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: onSurface, // Teks berwarna gelap
+                  color: onSurface,
                   letterSpacing: 0.2,
                 ),
                 overflow: TextOverflow.ellipsis,
@@ -653,7 +756,7 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFFAF101A).withOpacity(0.04),
+              color: const Color(0xFFD62818).withOpacity(0.04),
               blurRadius: 32,
               offset: const Offset(0, 8),
             ),
