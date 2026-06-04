@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'tambah_jadwal_screen.dart';
 import '../widgets/responsive_content.dart';
 
@@ -20,6 +21,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   static const Color onSurfaceVariant = Color(0xFF5B403D);
   static const Color outlineVariant = Color(0xFFE4BEBA);
 
+  // ── Firebase ────────────────────────────────────────────
+  late final DatabaseReference _schedulesRef;
+
+  // Semua jadwal dari Firebase, key = jadwal_id (e.g. "jadwal_1")
+  Map<String, Map<String, dynamic>> _allSchedules = {};
+  bool _isLoading = true;
+
+  // ── Filter ──────────────────────────────────────────────
   String _selectedDay = 'Semua';
   final List<String> _days = [
     'Semua',
@@ -32,40 +41,192 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     'Min',
   ];
 
-  // Data jadwal
-  final List<Map<String, dynamic>> _jadwalHariIni = [
-    {
-      'time': '06:00',
-      'repeat': 'Setiap Hari',
-      'pakan': true,
-      'air': true,
-      'days': ['S', 'S', 'R', 'K', 'J', 'S', 'M'],
-      'activeDays': [true, true, true, true, true, true, true],
-      'isActive': true,
-    },
-    {
-      'time': '12:00',
-      'repeat': 'Setiap Hari',
-      'pakan': true,
-      'air': false,
-      'days': ['S', 'S', 'R', 'K', 'J', 'S', 'M'],
-      'activeDays': [true, true, true, true, true, true, true],
-      'isActive': true,
-    },
-  ];
+  // Mapping label hari → index di Firebase days array (0=Sen, 6=Min)
+  static const Map<String, int> _dayIndexMap = {
+    'Sen': 0,
+    'Sel': 1,
+    'Rab': 2,
+    'Kam': 3,
+    'Jum': 4,
+    'Sab': 5,
+    'Min': 6,
+  };
 
-  final List<Map<String, dynamic>> _jadwalBesok = [
-    {
-      'time': '08:00',
-      'repeat': 'Khusus',
-      'pakan': false,
-      'air': true,
-      'days': ['S', 'S', 'R', 'K', 'J', 'S', 'M'],
-      'activeDays': [false, true, false, false, false, false, false],
-      'isActive': false,
-    },
-  ];
+  // Label singkat hari untuk pill (urutan sesuai Firebase days index)
+  static const List<String> _dayLabels = ['S', 'S', 'R', 'K', 'J', 'S', 'M'];
 
+  @override
+  void initState() {
+    super.initState();
+    _schedulesRef = FirebaseDatabase.instance.ref('schedules');
+    _listenSchedules();
+  }
+
+  // ── Firebase Listener ───────────────────────────────────
+  void _listenSchedules() {
+    _schedulesRef.onValue.listen((event) {
+      final raw = event.snapshot.value;
+      if (!mounted) return;
+
+      if (raw == null) {
+        setState(() {
+          _allSchedules = {};
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final rawMap = Map<String, dynamic>.from(raw as Map);
+      final parsed = <String, Map<String, dynamic>>{};
+
+      rawMap.forEach((key, value) {
+        final jadwal = Map<String, dynamic>.from(value as Map);
+
+        // Parsing days: Firebase menyimpan sebagai Map {0: true, 1: false, ...}
+        final daysRaw = jadwal['days'];
+        List<bool> activeDays = List.filled(7, false);
+        if (daysRaw is Map) {
+          daysRaw.forEach((k, v) {
+            final idx = int.tryParse(k.toString());
+            if (idx != null && idx >= 0 && idx < 7) {
+              activeDays[idx] = v == true;
+            }
+          });
+        } else if (daysRaw is List) {
+          for (int i = 0; i < daysRaw.length && i < 7; i++) {
+            activeDays[i] = daysRaw[i] == true;
+          }
+        }
+
+        // type: "pakan" | "air" | "pakan_air"
+        final type = jadwal['type']?.toString() ?? 'pakan_air';
+
+        parsed[key] = {
+          'id': key,
+          'time': jadwal['time']?.toString() ?? '00:00',
+          'repeat': (jadwal['repeat'] == true) ? 'Setiap Hari' : 'Khusus',
+          'pakan': type == 'pakan' || type == 'pakan_air',
+          'air': type == 'air' || type == 'pakan_air',
+          'type': type,
+          'portion': (jadwal['portion'] as num?)?.toInt() ?? 0,
+          'water': jadwal['water']?.toString() ?? '',
+          'days': _dayLabels,
+          'activeDays': activeDays,
+          'isActive': jadwal['active'] == true,
+        };
+      });
+
+      // Sort berdasarkan time
+      final sortedEntries = parsed.entries.toList()
+        ..sort((a, b) => a.value['time'].compareTo(b.value['time']));
+
+      setState(() {
+        _allSchedules = Map.fromEntries(sortedEntries);
+        _isLoading = false;
+      });
+    });
+  }
+
+  // ── Helper: filter jadwal berdasarkan hari terpilih ─────
+  List<MapEntry<String, Map<String, dynamic>>> get _filteredEntries {
+    if (_selectedDay == 'Semua') return _allSchedules.entries.toList();
+    final dayIdx = _dayIndexMap[_selectedDay];
+    if (dayIdx == null) return _allSchedules.entries.toList();
+    return _allSchedules.entries.where((e) {
+      final activeDays = e.value['activeDays'] as List<bool>;
+      return dayIdx < activeDays.length && activeDays[dayIdx];
+    }).toList();
+  }
+
+  // Jadwal hari ini: isActive = true
+  List<MapEntry<String, Map<String, dynamic>>> get _jadwalAktif =>
+      _filteredEntries.where((e) => e.value['isActive'] == true).toList();
+
+  // Jadwal tidak aktif (tampil di bawah sebagai "Jadwal Besok")
+  List<MapEntry<String, Map<String, dynamic>>> get _jadwalNonAktif =>
+      _filteredEntries.where((e) => e.value['isActive'] != true).toList();
+
+  // Hitung jumlah jadwal aktif hari ini (tanpa filter hari)
+  int get _totalAktifHariIni =>
+      _allSchedules.values.where((v) => v['isActive'] == true).length;
+
+  // ── Toggle active di Firebase ───────────────────────────
+  Future<void> _toggleActive(String id, bool currentValue) async {
+    await _schedulesRef.child(id).update({'active': !currentValue});
+  }
+
+  // ── Hapus jadwal di Firebase ────────────────────────────
+  Future<void> _deleteJadwal(String id) async {
+    await _schedulesRef.child(id).remove();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Jadwal berhasil dihapus'),
+        backgroundColor: primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  // ── Edit jadwal ─────────────────────────────────────────
+  Future<void> _editJadwal(String id, Map<String, dynamic> jadwal) async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (_) => TambahJadwalScreen(initialJadwal: jadwal),
+      ),
+    );
+    if (!mounted || result == null) return;
+
+    // Konversi hasil TambahJadwalScreen kembali ke format Firebase
+    await _saveToFirebase(id, result);
+  }
+
+  // ── Tambah jadwal baru ───────────────────────────────────
+  Future<void> _navigateToTambahJadwal() async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(builder: (_) => const TambahJadwalScreen()),
+    );
+    if (!mounted || result == null) return;
+
+    // Buat key baru otomatis (jadwal_timestamp)
+    final newKey = 'jadwal_${DateTime.now().millisecondsSinceEpoch}';
+    await _saveToFirebase(newKey, result);
+  }
+
+  // ── Helper: simpan Map jadwal ke Firebase ────────────────
+  Future<void> _saveToFirebase(String id, Map<String, dynamic> data) async {
+    // Konversi activeDays List<bool> → Map {0: true, 1: false, ...}
+    final activeDays =
+        data['activeDays'] as List<bool>? ?? List.filled(7, true);
+    final daysMap = <String, bool>{};
+    for (int i = 0; i < activeDays.length; i++) {
+      daysMap[i.toString()] = activeDays[i];
+    }
+
+    // Tentukan type dari flag pakan/air
+    final pakan = data['pakan'] == true;
+    final air = data['air'] == true;
+    String type = 'pakan';
+    if (pakan && air)
+      type = 'pakan_air';
+    else if (air)
+      type = 'air';
+
+    await _schedulesRef.child(id).set({
+      'active': data['isActive'] ?? true,
+      'days': daysMap,
+      'portion': data['portion'] ?? 200,
+      'repeat': data['repeat'] == 'Setiap Hari',
+      'time': data['time'] ?? '08:00',
+      'type': type,
+      'water': data['water'] ?? '',
+    });
+  }
+
+  // ============================================================
+  //  BUILD
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -74,22 +235,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         children: [
           _buildTopAppBar(),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 120),
-              child: ResponsiveContent(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 24),
-                    _buildSummaryStrip(),
-                    const SizedBox(height: 24),
-                    _buildDayFilter(),
-                    const SizedBox(height: 24),
-                    _buildJadwalList(),
-                  ],
-                ),
-              ),
-            ),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: primary))
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.only(bottom: 120),
+                    child: ResponsiveContent(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 24),
+                          _buildSummaryStrip(),
+                          const SizedBox(height: 24),
+                          _buildDayFilter(),
+                          const SizedBox(height: 24),
+                          _buildJadwalList(),
+                        ],
+                      ),
+                    ),
+                  ),
           ),
         ],
       ),
@@ -97,9 +260,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // TOP APP BAR
-  // ─────────────────────────────────────────────
+  // ── Top App Bar ──────────────────────────────────────────
   Widget _buildTopAppBar() {
     return Container(
       color: primary,
@@ -128,9 +289,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // SUMMARY STRIP
-  // ─────────────────────────────────────────────
+  // ── Summary Strip ────────────────────────────────────────
   Widget _buildSummaryStrip() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -160,7 +319,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             ),
             const SizedBox(width: 12),
             Text(
-              '5 Jadwal Aktif Hari Ini',
+              '$_totalAktifHariIni Jadwal Aktif Hari Ini',
               style: GoogleFonts.manrope(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
@@ -174,9 +333,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // DAY FILTER
-  // ─────────────────────────────────────────────
+  // ── Day Filter ───────────────────────────────────────────
   Widget _buildDayFilter() {
     return SizedBox(
       height: 42,
@@ -184,7 +341,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 24),
         itemCount: _days.length,
-        separatorBuilder: (context, index) => const SizedBox(width: 10),
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
         itemBuilder: (context, i) {
           final isSelected = _selectedDay == _days[i];
           return GestureDetector(
@@ -223,54 +380,78 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // JADWAL LIST
-  // ─────────────────────────────────────────────
+  // ── Jadwal List ──────────────────────────────────────────
   Widget _buildJadwalList() {
+    final aktif = _jadwalAktif;
+    final nonAktif = _jadwalNonAktif;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Jadwal Hari Ini
-          ..._jadwalHariIni.asMap().entries.map((e) {
-            return Padding(
+          // Jadwal Aktif (Hari Ini)
+          if (aktif.isEmpty)
+            Padding(
               padding: const EdgeInsets.only(bottom: 16),
-              child: _buildJadwalCard(e.value, false, e.key),
-            );
-          }),
-
-          // Separator Besok
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(
-              'Jadwal Besok',
-              style: GoogleFonts.manrope(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: onSurface,
-                letterSpacing: -0.5,
+              child: Center(
+                child: Text(
+                  'Tidak ada jadwal aktif',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    color: onSurfaceVariant,
+                  ),
+                ),
+              ),
+            )
+          else
+            ...aktif.map(
+              (e) => Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: _buildJadwalCard(
+                  jadwal: e.value,
+                  id: e.key,
+                  isBesok: false,
+                ),
               ),
             ),
-          ),
 
-          // Jadwal Besok
-          ..._jadwalBesok.asMap().entries.map((e) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: _buildJadwalCard(e.value, true, e.key),
-            );
-          }),
+          // Separator Jadwal Non-Aktif
+          if (nonAktif.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'Jadwal Tidak Aktif',
+                style: GoogleFonts.manrope(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: onSurface,
+                  letterSpacing: -0.5,
+                ),
+              ),
+            ),
+            ...nonAktif.map(
+              (e) => Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: _buildJadwalCard(
+                  jadwal: e.value,
+                  id: e.key,
+                  isBesok: true,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildJadwalCard(
-    Map<String, dynamic> jadwal,
-    bool isBesok,
-    int index,
-  ) {
+  // ── Jadwal Card (UI sama persis dengan versi dummy) ──────
+  Widget _buildJadwalCard({
+    required Map<String, dynamic> jadwal,
+    required String id,
+    required bool isBesok,
+  }) {
     final bool isActive = jadwal['isActive'] as bool;
     final List<String> days = List<String>.from(jadwal['days']);
     final List<bool> activeDays = List<bool>.from(jadwal['activeDays']);
@@ -309,7 +490,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Time + Badge + Toggle
                     Wrap(
                       spacing: 16,
                       runSpacing: 12,
@@ -369,18 +549,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         // Toggle + More
                         Row(
                           children: [
-                            // Custom Toggle
                             GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  if (isBesok) {
-                                    _jadwalBesok[index]['isActive'] = !isActive;
-                                  } else {
-                                    _jadwalHariIni[index]['isActive'] =
-                                        !isActive;
-                                  }
-                                });
-                              },
+                              onTap: () => _toggleActive(id, isActive),
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 250),
                                 width: 44,
@@ -411,8 +581,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                               color: Colors.transparent,
                               borderRadius: BorderRadius.circular(999),
                               child: InkWell(
-                                onTap: () =>
-                                    _showJadwalActions(jadwal, isBesok, index),
+                                onTap: () => _showJadwalActions(
+                                  jadwal: jadwal,
+                                  id: id,
+                                  isBesok: isBesok,
+                                ),
                                 borderRadius: BorderRadius.circular(999),
                                 child: Padding(
                                   padding: const EdgeInsets.all(6),
@@ -486,6 +659,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   Widget _infoChip(IconData icon, String label) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 16, color: onSurfaceVariant),
         const SizedBox(width: 5),
@@ -497,11 +671,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  Future<void> _showJadwalActions(
-    Map<String, dynamic> jadwal,
-    bool isBesok,
-    int index,
-  ) async {
+  // ── Bottom Sheet Actions ─────────────────────────────────
+  Future<void> _showJadwalActions({
+    required Map<String, dynamic> jadwal,
+    required String id,
+    required bool isBesok,
+  }) async {
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -539,7 +714,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   subtitle: 'Ubah waktu, jenis pemberian, dan hari aktif',
                   onTap: () {
                     Navigator.of(context).pop();
-                    _editJadwal(jadwal, isBesok, index);
+                    _editJadwal(id, jadwal);
                   },
                 ),
                 const SizedBox(height: 8),
@@ -550,7 +725,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   isDanger: true,
                   onTap: () {
                     Navigator.of(context).pop();
-                    _deleteJadwal(isBesok, index);
+                    _deleteJadwal(id);
                   },
                 ),
               ],
@@ -628,55 +803,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  Future<void> _editJadwal(
-    Map<String, dynamic> jadwal,
-    bool isBesok,
-    int index,
-  ) async {
-    final result = await Navigator.of(context).push<Map<String, dynamic>>(
-      MaterialPageRoute(
-        builder: (_) => TambahJadwalScreen(initialJadwal: jadwal),
-      ),
-    );
-
-    if (!mounted || result == null) return;
-    setState(() {
-      if (isBesok) {
-        _jadwalBesok[index] = result;
-      } else {
-        _jadwalHariIni[index] = result;
-      }
-    });
-  }
-
-  void _deleteJadwal(bool isBesok, int index) {
-    setState(() {
-      if (isBesok) {
-        _jadwalBesok.removeAt(index);
-      } else {
-        _jadwalHariIni.removeAt(index);
-      }
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Jadwal berhasil dihapus'),
-        backgroundColor: primary,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // FAB
-  // ─────────────────────────────────────────────
+  // ── FAB ──────────────────────────────────────────────────
   Widget _buildFAB() {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         GestureDetector(
-          onTap: () => _navigateToTambahJadwal(),
+          onTap: _navigateToTambahJadwal,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(
@@ -703,23 +836,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         ),
         const SizedBox(width: 12),
         FloatingActionButton(
-          onPressed: () => _navigateToTambahJadwal(),
+          onPressed: _navigateToTambahJadwal,
           backgroundColor: primary,
           elevation: 6,
           child: const Icon(Icons.add_rounded, color: Colors.white, size: 30),
         ),
       ],
     );
-  }
-
-  Future<void> _navigateToTambahJadwal() async {
-    final result = await Navigator.of(context).push<Map<String, dynamic>>(
-      MaterialPageRoute(builder: (_) => const TambahJadwalScreen()),
-    );
-
-    if (!mounted || result == null) return;
-    setState(() {
-      _jadwalHariIni.add(result);
-    });
   }
 }

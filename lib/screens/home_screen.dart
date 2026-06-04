@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'notifikasi_screen.dart';
 import '../widgets/responsive_content.dart';
-
-// Pastikan riwayat_screen.dart sudah ada di folder yang sama
-// import 'riwayat_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onMenuTap;
@@ -33,18 +31,93 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Color onSurfaceVariant = Color(0xFF5B403D);
   static const Color outlineVariant = Color(0xFFE4BEBA);
 
-  ({String label, Color color}) _temperatureStatus(int value) {
+  // ── Firebase state ──────────────────────────────────────
+  late final DatabaseReference _statusRef;
+  double _temperature = 0;
+  double _humidity = 0;
+  double _feedWeight = 0;
+  double _waterWeight = 0;
+  bool _feeding = false;
+  bool _watering = false;
+  String _lastUpdated = '-';
+  bool _isLoading = true;
+
+  // Untuk grafik: simpan history suhu & kelembaban (max 13 titik)
+  final List<FlSpot> _suhuSpots = [];
+  final List<FlSpot> _kelembabanSpots = [];
+  int _spotIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _statusRef = FirebaseDatabase.instance.ref('status');
+    _listenFirebase();
+  }
+
+  void _listenFirebase() {
+    _statusRef.onValue.listen((event) {
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+
+      final newTemp = (data['temperature'] as num?)?.toDouble() ?? 0;
+      final newHum = (data['humidity'] as num?)?.toDouble() ?? 0;
+
+      setState(() {
+        _temperature = newTemp;
+        _humidity = newHum;
+        _feedWeight = (data['feed_weight'] as num?)?.toDouble() ?? 0;
+        _waterWeight = (data['water_weight'] as num?)?.toDouble() ?? 0;
+        _feeding = data['feeding'] == true;
+        _watering = data['watering'] == true;
+        _lastUpdated = data['last_updated']?.toString() ?? '-';
+        _isLoading = false;
+
+        // Tambah titik grafik (rolling 13 titik = 24 jam simulasi)
+        if (_spotIndex < 25) {
+          _suhuSpots.add(FlSpot(_spotIndex.toDouble(), newTemp));
+          _kelembabanSpots.add(FlSpot(_spotIndex.toDouble(), newHum));
+        } else {
+          // Geser semua titik ke kiri
+          for (int i = 0; i < _suhuSpots.length; i++) {
+            _suhuSpots[i] = FlSpot(_suhuSpots[i].x - 1, _suhuSpots[i].y);
+            _kelembabanSpots[i] = FlSpot(
+              _kelembabanSpots[i].x - 1,
+              _kelembabanSpots[i].y,
+            );
+          }
+          _suhuSpots.removeWhere((s) => s.x < 0);
+          _kelembabanSpots.removeWhere((s) => s.x < 0);
+          _suhuSpots.add(FlSpot(24, newTemp));
+          _kelembabanSpots.add(FlSpot(24, newHum));
+        }
+        _spotIndex++;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  // ── Status helpers ───────────────────────────────────────
+  ({String label, Color color}) _temperatureStatus(double value) {
     if (value >= 22 && value <= 25) return (label: 'Normal', color: success);
     if (value >= 26 && value <= 29) return (label: 'Waspada', color: warning);
     return (label: 'Bahaya', color: danger);
   }
 
-  ({String label, Color color}) _humidityStatus(int value) {
+  ({String label, Color color}) _humidityStatus(double value) {
     if (value < 50) return (label: 'Terlalu Kering', color: warning);
     if (value <= 70) return (label: 'Ideal', color: success);
     return (label: 'Terlalu Lembab', color: danger);
   }
 
+  /// Hitung persentase stok dari berat (asumsi max 5 kg pakan / 20 liter air)
+  int _feedPercent() => (_feedWeight / 5.0 * 100).clamp(0, 100).toInt();
+  int _waterPercent() => (_waterWeight / 20.0 * 100).clamp(0, 100).toInt();
+
+  // ── Build ────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -54,31 +127,46 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildTopAppBar(),
           _buildStatusStrip(),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 100),
-              child: ResponsiveContent(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 24),
-                    _buildSectionStatusKandang(),
-                    const SizedBox(height: 32),
-                    _buildSectionGrafik(),
-                    const SizedBox(height: 32),
-                    _buildSectionAksiCepat(),
-                    const SizedBox(height: 32),
-                    _buildSectionJadwal(),
-                    const SizedBox(height: 24),
-                  ],
-                ),
-              ),
-            ),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: primary))
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.only(bottom: 100),
+                    child: ResponsiveContent(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 24),
+                          _buildSectionStatusKandang(),
+                          const SizedBox(height: 32),
+                          _buildSectionGrafik(),
+                          const SizedBox(height: 32),
+                          _buildSectionAksiCepat(),
+                          const SizedBox(height: 32),
+                          _buildSectionJadwal(),
+                          const SizedBox(height: 8),
+                          // last updated
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 24),
+                            child: Text(
+                              'Terakhir diperbarui: $_lastUpdated',
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                color: onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
+                      ),
+                    ),
+                  ),
           ),
         ],
       ),
     );
   }
 
+  // ── Top App Bar ──────────────────────────────────────────
   Widget _buildTopAppBar() {
     return Container(
       color: const Color(0xFFD62818),
@@ -162,6 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── Status Strip ─────────────────────────────────────────
   Widget _buildStatusStrip() {
     return Container(
       color: primaryContainer,
@@ -204,11 +293,10 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── Section: Status Kandang ──────────────────────────────
   Widget _buildSectionStatusKandang() {
-    final suhu = 28;
-    final kelembaban = 64;
-    final suhuStatus = _temperatureStatus(suhu);
-    final kelembabanStatus = _humidityStatus(kelembaban);
+    final suhuStatus = _temperatureStatus(_temperature);
+    final kelembabanStatus = _humidityStatus(_humidity);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,7 +325,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 iconColor: primary,
                 borderColor: primary,
                 label: 'Suhu',
-                value: '$suhu°C',
+                // Tampilkan 1 desimal
+                value: '${_temperature.toStringAsFixed(1)}°C',
                 status: suhuStatus.label,
                 statusColor: suhuStatus.color,
               ),
@@ -248,7 +337,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 iconColor: primary,
                 borderColor: primary,
                 label: 'Kelembaban',
-                value: '$kelembaban%',
+                value: '${_humidity.toStringAsFixed(1)}%',
                 status: kelembabanStatus.label,
                 statusColor: kelembabanStatus.color,
               ),
@@ -256,15 +345,15 @@ class _HomeScreenState extends State<HomeScreen> {
               _stockCard(
                 icon: Icons.grain_rounded,
                 label: 'Stok Pakan',
-                percentage: 65,
-                amount: '3.2 kg',
+                percentage: _feedPercent(),
+                amount: '${_feedWeight.toStringAsFixed(1)} kg',
               ),
               const SizedBox(width: 16),
               _stockCard(
                 icon: Icons.water_drop_rounded,
                 label: 'Stok Air Minum',
-                percentage: 78,
-                amount: '12.4 liter',
+                percentage: _waterPercent(),
+                amount: '${_waterWeight.toStringAsFixed(1)} liter',
               ),
             ],
           ),
@@ -443,54 +532,32 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── Section: Grafik ──────────────────────────────────────
   Widget _buildSectionGrafik() {
-    final suhuSpots = [
-      const FlSpot(0, 30),
-      const FlSpot(2, 28),
-      const FlSpot(4, 29),
-      const FlSpot(6, 27),
-      const FlSpot(8, 26),
-      const FlSpot(10, 28),
-      const FlSpot(12, 32),
-      const FlSpot(14, 33),
-      const FlSpot(16, 31),
-      const FlSpot(18, 29),
-      const FlSpot(20, 28),
-      const FlSpot(22, 27),
-      const FlSpot(24, 26),
-    ];
-    final kelembabanSpots = [
-      const FlSpot(0, 58),
-      const FlSpot(2, 60),
-      const FlSpot(4, 62),
-      const FlSpot(6, 64),
-      const FlSpot(8, 66),
-      const FlSpot(10, 68),
-      const FlSpot(12, 72),
-      const FlSpot(14, 70),
-      const FlSpot(16, 67),
-      const FlSpot(18, 65),
-      const FlSpot(20, 63),
-      const FlSpot(22, 61),
-      const FlSpot(24, 60),
-    ];
+    // Fallback jika belum ada data grafik
+    final suhuSpots = _suhuSpots.isNotEmpty
+        ? _suhuSpots
+        : [FlSpot(0, _temperature)];
+    final kelembabanSpots = _kelembabanSpots.isNotEmpty
+        ? _kelembabanSpots
+        : [FlSpot(0, _humidity)];
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         children: [
           _lineChartCard(
-            title: 'Suhu Kandang 24 Jam',
+            title: 'Suhu Kandang (Realtime)',
             spots: suhuSpots,
-            minY: 22,
-            maxY: 34,
-            interval: 2,
+            minY: 20,
+            maxY: 40,
+            interval: 5,
             unit: '°',
             color: const Color(0xFFF59E0B),
           ),
           const SizedBox(height: 20),
           _lineChartCard(
-            title: 'Kelembaban Kandang 24 Jam',
+            title: 'Kelembaban Kandang (Realtime)',
             spots: kelembabanSpots,
             minY: 0,
             maxY: 100,
@@ -638,9 +705,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  // UPDATE PADA BAGIAN INI AGAR TOMBOL BERWARNA PUTIH
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Section: Aksi Cepat ──────────────────────────────────
   Widget _buildSectionAksiCepat() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -746,6 +811,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ── Section: Jadwal ──────────────────────────────────────
   Widget _buildSectionJadwal() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -779,7 +845,12 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
             _jadwalItem(time: '12:00', label: 'Porsi Siang', isDone: true),
             const SizedBox(height: 16),
-            _jadwalItem(time: '18:00', label: 'Porsi Malam', isDone: false),
+            _jadwalItem(
+              time: '18:00',
+              label: 'Porsi Malam',
+              // Jika feeding aktif di Firebase, tandai sedang berjalan
+              isDone: !_feeding,
+            ),
           ],
         ),
       ),

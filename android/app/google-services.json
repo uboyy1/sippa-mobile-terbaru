@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "1068107148433",
+    "firebase_url": "https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "sippa-bb964",
+    "storage_bucket": "sippa-bb964.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1068107148433:android:fa46d52d073c44e24b2330",
+        "android_client_info": {
+          "package_name": "com.example.sippa_mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDMkv0VOwhL0t9pwQKN-E27F9FYI4cRNRo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

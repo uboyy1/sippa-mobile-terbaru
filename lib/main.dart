@@ -1,11 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+// 1. Tambahkan import untuk Firebase
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
-// Import MainScreen sebagai ganti HomeScreen untuk rute utama
 import 'screens/main_screen.dart';
 
-void main() {
+// 2. Ubah void main menjadi async agar bisa menunggu inisialisasi Firebase
+void main() async {
+  // 3. Wajib memanggil ini untuk inisialisasi binding framework
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 4. Inisialisasi Firebase
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -30,7 +39,6 @@ class SippaApp extends StatelessWidget {
       initialRoute: '/',
       routes: {
         '/': (context) => const SplashScreen(),
-        // Rute /home sekarang diarahkan ke MainScreen (yang ada Navbarnya)
         '/home': (context) => const MainScreen(),
       },
     );

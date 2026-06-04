@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:intl/intl.dart';
 import '../widgets/responsive_content.dart';
 
 class RiwayatScreen extends StatefulWidget {
@@ -19,6 +21,243 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
   static const Color outline = Color(0xFF8F6F6C);
   static const Color outlineVariant = Color(0xFFE4BEBA);
 
+  late final DatabaseReference _logsRef;
+
+  // Semua log dari Firebase, sudah diparse
+  List<Map<String, dynamic>> _allLogs = [];
+  List<Map<String, dynamic>> _filteredLogs = [];
+  bool _isLoading = true;
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _logsRef = FirebaseDatabase.instance.ref('logs');
+    _listenLogs();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // ── Firebase: ambil 50 log terbaru ──────────────────────
+  void _listenLogs() {
+    // limitToLast(50) → ambil 50 entri terbaru saja
+    _logsRef.orderByKey().limitToLast(50).onValue.listen((event) {
+      final raw = event.snapshot.value;
+      if (!mounted) return;
+
+      if (raw == null) {
+        setState(() {
+          _allLogs = [];
+          _filteredLogs = [];
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final rawMap = Map<String, dynamic>.from(raw as Map);
+      final parsed = <Map<String, dynamic>>[];
+
+      rawMap.forEach((key, value) {
+        final log = Map<String, dynamic>.from(value as Map);
+        parsed.add({
+          'id': key,
+          'timestamp': log['timestamp']?.toString() ?? '',
+          'type': log['type']?.toString() ?? 'sistem',
+          'status': log['status']?.toString() ?? 'sukses',
+          'title': log['title']?.toString() ?? '-',
+          'desc': log['desc']?.toString() ?? '',
+          'value': log['value'],
+          'unit': log['unit']?.toString() ?? '',
+        });
+      });
+
+      // Sort terbaru di atas (descending by key/timestamp)
+      parsed.sort((a, b) => b['id'].compareTo(a['id']));
+
+      setState(() {
+        _allLogs = parsed;
+        _filteredLogs = _applySearch(parsed, _searchQuery);
+        _isLoading = false;
+      });
+    });
+  }
+
+  // ── Search filter ────────────────────────────────────────
+  List<Map<String, dynamic>> _applySearch(
+    List<Map<String, dynamic>> logs,
+    String query,
+  ) {
+    if (query.isEmpty) return logs;
+    final q = query.toLowerCase();
+    return logs.where((log) {
+      return log['title'].toString().toLowerCase().contains(q) ||
+          log['desc'].toString().toLowerCase().contains(q) ||
+          log['type'].toString().toLowerCase().contains(q);
+    }).toList();
+  }
+
+  void _onSearch(String query) {
+    setState(() {
+      _searchQuery = query;
+      _filteredLogs = _applySearch(_allLogs, query);
+    });
+  }
+
+  // ── Kelompokkan logs berdasarkan tanggal ─────────────────
+  Map<String, List<Map<String, dynamic>>> _groupByDate(
+    List<Map<String, dynamic>> logs,
+  ) {
+    final Map<String, List<Map<String, dynamic>>> grouped = {};
+    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final yesterday = DateFormat(
+      'yyyy-MM-dd',
+    ).format(DateTime.now().subtract(const Duration(days: 1)));
+
+    for (final log in logs) {
+      final ts = log['timestamp'].toString();
+      String dateKey;
+      try {
+        final dt = DateTime.parse(ts.replaceAll(' ', 'T'));
+        final dateStr = DateFormat('yyyy-MM-dd').format(dt);
+        if (dateStr == today) {
+          dateKey = 'Aktivitas Hari Ini';
+        } else if (dateStr == yesterday) {
+          dateKey = 'Aktivitas Kemarin';
+        } else {
+          // Format: "03 Jun 2026"
+          dateKey = DateFormat('dd MMM yyyy', 'id').format(dt);
+        }
+      } catch (_) {
+        dateKey = 'Lainnya';
+      }
+      grouped.putIfAbsent(dateKey, () => []).add(log);
+    }
+    return grouped;
+  }
+
+  // ── Visual config per type & status ──────────────────────
+  ({
+    IconData icon,
+    Color iconColor,
+    Color iconBg,
+    Color borderColor,
+    Color? categoryColor,
+    String categoryLabel,
+    Color bgColor,
+  })
+  _logVisual(Map<String, dynamic> log) {
+    final type = log['type'].toString();
+    final status = log['status'].toString();
+    final isOld = type.contains('kemarin') || log['_isOld'] == true;
+
+    // Warna berdasarkan status
+    if (status == 'peringatan') {
+      return (
+        icon: Icons.warning_rounded,
+        iconColor: const Color(0xFFEA580C),
+        iconBg: const Color(0xFFFFF7ED),
+        borderColor: const Color(0xFFF97316),
+        categoryColor: const Color(0xFFF97316).withOpacity(0.8),
+        categoryLabel: _categoryLabel(type),
+        bgColor: Colors.white,
+      );
+    }
+
+    if (status == 'gagal') {
+      return (
+        icon: Icons.cancel_rounded,
+        iconColor: primary,
+        iconBg: const Color(0xFFFFF2F0),
+        borderColor: primary,
+        categoryColor: primary,
+        categoryLabel: _categoryLabel(type),
+        bgColor: Colors.white,
+      );
+    }
+
+    // sukses — bedakan berdasarkan type
+    switch (type) {
+      case 'pakan_otomatis':
+      case 'pakan_manual':
+        return (
+          icon: isOld
+              ? Icons.check_circle_outline_rounded
+              : Icons.check_circle_rounded,
+          iconColor: isOld ? const Color(0xFF94A3B8) : const Color(0xFF16A34A),
+          iconBg: isOld ? Colors.transparent : const Color(0xFFF0FDF4),
+          borderColor: isOld
+              ? const Color(0xFF94A3B8)
+              : const Color(0xFF22C55E),
+          categoryColor: null,
+          categoryLabel: _categoryLabel(type),
+          bgColor: isOld ? surfaceContainerLow : Colors.white,
+        );
+      case 'air_otomatis':
+      case 'air_manual':
+        return (
+          icon: isOld
+              ? Icons.check_circle_outline_rounded
+              : Icons.check_circle_rounded,
+          iconColor: isOld ? const Color(0xFF94A3B8) : const Color(0xFF1976D2),
+          iconBg: isOld ? Colors.transparent : const Color(0xFFE3F2FD),
+          borderColor: isOld
+              ? const Color(0xFF94A3B8)
+              : const Color(0xFF1976D2),
+          categoryColor: null,
+          categoryLabel: _categoryLabel(type),
+          bgColor: isOld ? surfaceContainerLow : Colors.white,
+        );
+      case 'sistem':
+      default:
+        return (
+          icon: Icons.wifi_rounded,
+          iconColor: const Color(0xFF94A3B8),
+          iconBg: Colors.transparent,
+          borderColor: const Color(0xFFCBD5E1),
+          categoryColor: null,
+          categoryLabel: _categoryLabel(type),
+          bgColor: isOld ? surfaceContainerLow : Colors.white,
+        );
+    }
+  }
+
+  String _categoryLabel(String type) {
+    switch (type) {
+      case 'pakan_otomatis':
+        return 'Pakan Otomatis';
+      case 'pakan_manual':
+        return 'Pakan Manual';
+      case 'air_otomatis':
+        return 'Air Otomatis';
+      case 'air_manual':
+        return 'Air Manual';
+      case 'sensor':
+        return 'Sensor Lingkungan';
+      case 'sistem':
+        return 'Sistem Perangkat';
+      default:
+        return type;
+    }
+  }
+
+  // ── Parse jam dari timestamp ─────────────────────────────
+  String _timeFromTimestamp(String ts) {
+    try {
+      final dt = DateTime.parse(ts.replaceAll(' ', 'T'));
+      return DateFormat('HH:mm').format(dt);
+    } catch (_) {
+      return ts;
+    }
+  }
+
+  // ============================================================
+  //  BUILD
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -36,28 +275,29 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
           ),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: 120),
-        child: ResponsiveContent(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 24),
-              _buildSearchAndFilter(),
-              const SizedBox(height: 32),
-              _buildHariIniSection(),
-              const SizedBox(height: 40),
-              _buildKemarinSection(),
-            ],
-          ),
-        ),
-      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: primary))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: 120),
+              child: ResponsiveContent(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 24),
+                    _buildSearchAndFilter(),
+                    const SizedBox(height: 32),
+                    if (_filteredLogs.isEmpty)
+                      _buildEmptyState()
+                    else
+                      _buildGroupedLogs(),
+                  ],
+                ),
+              ),
+            ),
     );
   }
 
-  // ─────────────────────────────────────────────
-  // SEARCH & FILTER
-  // ─────────────────────────────────────────────
+  // ── Search Bar ───────────────────────────────────────────
   Widget _buildSearchAndFilter() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -83,6 +323,8 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
             const SizedBox(width: 12),
             Expanded(
               child: TextField(
+                controller: _searchController,
+                onChanged: _onSearch,
                 decoration: InputDecoration(
                   border: InputBorder.none,
                   hintText: 'Cari riwayat...',
@@ -91,92 +333,105 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
                 style: GoogleFonts.inter(color: onSurface, fontSize: 14),
               ),
             ),
+            if (_searchQuery.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  _searchController.clear();
+                  _onSearch('');
+                },
+                child: const Icon(
+                  Icons.close_rounded,
+                  color: outline,
+                  size: 20,
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  // ─────────────────────────────────────────────
-  // HARI INI
-  // ─────────────────────────────────────────────
-  Widget _buildHariIniSection() {
+  // ── Grouped Logs ─────────────────────────────────────────
+  Widget _buildGroupedLogs() {
+    final grouped = _groupByDate(_filteredLogs);
+
+    // Urutan: Hari Ini → Kemarin → tanggal lainnya
+    final orderedKeys = <String>[];
+    if (grouped.containsKey('Aktivitas Hari Ini')) {
+      orderedKeys.add('Aktivitas Hari Ini');
+    }
+    if (grouped.containsKey('Aktivitas Kemarin')) {
+      orderedKeys.add('Aktivitas Kemarin');
+    }
+    for (final k in grouped.keys) {
+      if (k != 'Aktivitas Hari Ini' && k != 'Aktivitas Kemarin') {
+        orderedKeys.add(k);
+      }
+    }
+
+    return Column(
+      children: orderedKeys.asMap().entries.map((entry) {
+        final idx = entry.key;
+        final dateLabel = entry.value;
+        final logs = grouped[dateLabel]!;
+        final isOld = idx > 0; // Kemarin & sebelumnya pakai opacity
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 40),
+          child: Opacity(
+            opacity: isOld ? 0.7 : 1.0,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildSectionHeader(dateLabel),
+                  const SizedBox(height: 20),
+                  ...logs.asMap().entries.map((e) {
+                    // Tandai log lama untuk visual berbeda
+                    final logData = Map<String, dynamic>.from(e.value);
+                    if (isOld) logData['_isOld'] = true;
+                    final visual = _logVisual(logData);
+                    final time = _timeFromTimestamp(logData['timestamp']);
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: _riwayatCard(
+                        category: visual.categoryLabel,
+                        title: '$time - ${logData['title']}',
+                        desc: logData['desc'],
+                        icon: visual.icon,
+                        iconColor: visual.iconColor,
+                        iconBg: visual.iconBg,
+                        borderColor: visual.borderColor,
+                        bgColor: visual.bgColor,
+                        categoryColor: visual.categoryColor,
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // ── Empty State ──────────────────────────────────────────
+  Widget _buildEmptyState() {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSectionHeader('Aktivitas Hari Ini'),
-          const SizedBox(height: 20),
-          _riwayatCard(
-            category: 'Pakan Otomatis',
-            title: '06:00 - Pemberian Pakan Berhasil',
-            desc: 'Porsi: 200g',
-            icon: Icons.check_circle_rounded,
-            iconColor: const Color(0xFF16A34A), // green-600
-            iconBg: const Color(0xFFF0FDF4), // green-50
-            borderColor: const Color(0xFF22C55E), // green-500
-          ),
-          const SizedBox(height: 16),
-          _riwayatCard(
-            category: 'Sensor Lingkungan',
-            title: '09:45 - Peringatan Suhu Tinggi',
-            desc: 'Suhu: 34°C (Batas: 32°C)',
-            icon: Icons.warning_rounded,
-            iconColor: const Color(0xFFEA580C), // orange-600
-            iconBg: const Color(0xFFFFF7ED), // orange-50
-            borderColor: const Color(0xFFF97316), // orange-500
-            categoryColor: const Color(0xFFF97316).withOpacity(0.8),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ─────────────────────────────────────────────
-  // KEMARIN
-  // ─────────────────────────────────────────────
-  Widget _buildKemarinSection() {
-    return Opacity(
-      opacity: 0.7,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.symmetric(vertical: 60),
+      child: Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildSectionHeader('Aktivitas Kemarin'),
-            const SizedBox(height: 20),
-            _riwayatCard(
-              category: 'Pakan Manual',
-              title: '18:00 - Pemberian Pakan Berhasil',
-              desc: 'Porsi: 200g',
-              icon: Icons.check_circle_outline_rounded,
-              iconColor: const Color(0xFF94A3B8), // slate-400
-              iconBg: Colors.transparent,
-              borderColor: const Color(0xFF94A3B8),
-              bgColor: surfaceContainerLow,
-            ),
+            Icon(Icons.history_rounded, size: 56, color: outlineVariant),
             const SizedBox(height: 16),
-            _riwayatCard(
-              category: 'Pakan Otomatis',
-              title: '12:00 - Pemberian Pakan Berhasil',
-              desc: 'Porsi: 200g',
-              icon: Icons.check_circle_outline_rounded,
-              iconColor: const Color(0xFFCBD5E1), // slate-300
-              iconBg: Colors.transparent,
-              borderColor: const Color(0xFFCBD5E1),
-              bgColor: surfaceContainerLow,
-            ),
-            const SizedBox(height: 16),
-            _riwayatCard(
-              category: 'Sistem Perangkat',
-              title: '08:30 - Perangkat Terhubung Kembali',
-              desc: 'Gateway: SI-Node 04',
-              icon: Icons.wifi_rounded,
-              iconColor: const Color(0xFF94A3B8), // slate-400
-              iconBg: Colors.transparent,
-              borderColor: const Color(0xFFCBD5E1),
-              bgColor: surfaceContainerLow,
+            Text(
+              _searchQuery.isEmpty
+                  ? 'Belum ada riwayat aktivitas'
+                  : 'Tidak ada hasil untuk "$_searchQuery"',
+              style: GoogleFonts.inter(fontSize: 14, color: onSurfaceVariant),
             ),
           ],
         ),
@@ -184,9 +439,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // HELPERS
-  // ─────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────
   Widget _buildSectionHeader(String title) {
     return Row(
       children: [
@@ -233,7 +486,6 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
       ),
       child: Row(
         children: [
-          // Left Border Indicator
           Container(
             width: 4,
             decoration: BoxDecoration(
@@ -243,7 +495,6 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
               ),
             ),
           ),
-          // Content
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -281,7 +532,6 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
               ),
             ),
           ),
-          // Icon
           SizedBox(
             width: 64,
             child: Center(

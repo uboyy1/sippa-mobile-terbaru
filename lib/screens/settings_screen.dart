@@ -303,30 +303,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _buildCardContainer(
           children: [
             _buildListTile(
-              title: 'Keamanan',
-              onTap: () => _showInfoDialog(
-                'Keamanan',
-                'Pengaturan keamanan akun SIPPA aktif. Fitur ubah kata sandi dan autentikasi perangkat siap dikembangkan ke backend.',
-              ),
-              trailing: const Icon(
-                Icons.chevron_right_rounded,
-                size: 24,
-                color: onSurfaceVariant,
-              ),
-            ),
-            _buildListTile(
-              title: 'Bantuan & FAQ',
-              onTap: () => _showInfoDialog(
-                'Bantuan & FAQ',
-                'Gunakan menu Kontrol untuk aksi manual, Jadwal untuk otomatisasi pakan dan air, serta Notifikasi untuk memantau kondisi perangkat.',
-              ),
-              trailing: const Icon(
-                Icons.chevron_right_rounded,
-                size: 24,
-                color: onSurfaceVariant,
-              ),
-            ),
-            _buildListTile(
               title: 'Tentang SIPPA',
               onTap: () => _showInfoDialog(
                 'Tentang SIPPA',

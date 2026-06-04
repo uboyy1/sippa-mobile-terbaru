@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_database/firebase_database.dart';
 import '../widgets/responsive_content.dart';
 
 // ============================================================
@@ -20,23 +21,6 @@ const Color kOnSurfaceVariant = Color(0xFF5B403D);
 const Color kOutlineVariant = Color(0xFFE4BEBA);
 const Color kOnPrimaryContainer = Color(0xFFFFF2F0);
 
-class ManualControlBackend {
-  const ManualControlBackend();
-
-  Future<bool> isDeviceConnected() async {
-    await Future.delayed(const Duration(milliseconds: 400));
-    return true;
-  }
-
-  Future<void> sendFeedCommand(int grams) async {
-    await Future.delayed(const Duration(seconds: 2));
-  }
-
-  Future<void> sendWaterCommand(int milliliters) async {
-    await Future.delayed(const Duration(seconds: 2));
-  }
-}
-
 // ============================================================
 //  KONTROL MANUAL SCREEN
 // ============================================================
@@ -49,20 +33,36 @@ class KontrolManualScreen extends StatefulWidget {
 
 class _KontrolManualScreenState extends State<KontrolManualScreen>
     with TickerProviderStateMixin {
-  final ManualControlBackend _backend = const ManualControlBackend();
+  // ── Firebase refs ────────────────────────────────────────
+  late final DatabaseReference _controlRef;
+  late final DatabaseReference _statusRef;
+
+  // ── Firebase data (control node) ─────────────────────────
+  bool _manualFeed = false;
+  bool _manualWater = false;
+  int _portion = 0; // gram
+  int _waterVolume = 500; // ml
+  bool _reloadSched = false;
+
+  // ── Firebase data (status node) ──────────────────────────
+  double _feedWeight = 0; // kg — untuk progress bar sisa pakan
+  double _waterWeight = 0; // liter — untuk progress bar sisa air
   bool _isDeviceConnected = false;
 
-  // --- State Pakan ---
-  static const int _maxPorsiPakan = 500;
-  int _porsiPakan = 200;
+  // ── UI loading state ─────────────────────────────────────
   bool _isLoadingPakan = false;
-
-  // --- State Air ---
-  static const int _maxVolumeAir = 1000;
-  int _volumeAir = 150;
   bool _isLoadingAir = false;
+  bool _isInitializing = true;
 
-  // --- Animation Controllers ---
+  // ── Kapasitas maksimum (sesuaikan dengan hardware) ───────
+  static const double _maxFeedKg = 5.0; // 5 kg
+  static const double _maxWaterLiter = 20.0; // 20 liter
+
+  // ── Slider nilai sementara (sebelum dikirim) ─────────────
+  int _sliderPortion = 200; // gram
+  int _sliderWater = 500; // ml
+
+  // ── Animation Controllers ─────────────────────────────────
   late AnimationController _pakanBtnController;
   late AnimationController _airBtnController;
   late Animation<double> _pakanBtnScale;
@@ -71,7 +71,12 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   @override
   void initState() {
     super.initState();
-    _loadDeviceStatus();
+    _controlRef = FirebaseDatabase.instance.ref('control');
+    _statusRef = FirebaseDatabase.instance.ref('status');
+
+    _listenControl();
+    _listenStatus();
+
     _pakanBtnController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 120),
@@ -88,10 +93,46 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     );
   }
 
-  Future<void> _loadDeviceStatus() async {
-    final isConnected = await _backend.isDeviceConnected();
-    if (!mounted) return;
-    setState(() => _isDeviceConnected = isConnected);
+  // ── Firebase Listeners ────────────────────────────────────
+  void _listenControl() {
+    _controlRef.onValue.listen((event) {
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+      if (!mounted) return;
+
+      setState(() {
+        _manualFeed = data['manual_feed'] == true;
+        _manualWater = data['manual_water'] == true;
+        _portion = (data['portion'] as num?)?.toInt() ?? 0;
+        _waterVolume = (data['water_volume'] as num?)?.toInt() ?? 500;
+        _reloadSched = data['reload_sched'] == true;
+
+        // Sync slider dengan nilai Firebase (hanya jika tidak sedang loading)
+        if (!_isLoadingPakan) _sliderPortion = _portion.clamp(50, 500);
+        if (!_isLoadingAir) _sliderWater = _waterVolume.clamp(50, 1000);
+
+        // Jika manual_feed berubah jadi false → loading selesai
+        if (!_manualFeed && _isLoadingPakan) _isLoadingPakan = false;
+        if (!_manualWater && _isLoadingAir) _isLoadingAir = false;
+
+        _isInitializing = false;
+      });
+    });
+  }
+
+  void _listenStatus() {
+    _statusRef.onValue.listen((event) {
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+      if (!mounted) return;
+
+      setState(() {
+        _feedWeight = (data['feed_weight'] as num?)?.toDouble() ?? 0;
+        _waterWeight = (data['water_weight'] as num?)?.toDouble() ?? 0;
+        // Anggap perangkat terhubung jika ada data status masuk
+        _isDeviceConnected = true;
+      });
+    });
   }
 
   @override
@@ -101,40 +142,93 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     super.dispose();
   }
 
-  // --- Functions ---
-  void _onBeriPakan() async {
-    if (!_isDeviceConnected) {
-      return;
-    }
+  // ── Helper: progress ─────────────────────────────────────
+  double get _feedProgress => (_feedWeight / _maxFeedKg).clamp(0.0, 1.0);
+  double get _waterProgress => (_waterWeight / _maxWaterLiter).clamp(0.0, 1.0);
+
+  // ── Aksi: Beri Pakan ──────────────────────────────────────
+  Future<void> _onBeriPakan() async {
+    if (!_isDeviceConnected || _isLoadingPakan) return;
 
     await _pakanBtnController.forward();
     await _pakanBtnController.reverse();
+
     setState(() => _isLoadingPakan = true);
-    await _backend.sendFeedCommand(_maxPorsiPakan);
-    setState(() {
-      _porsiPakan = _maxPorsiPakan;
-      _isLoadingPakan = false;
-    });
+
+    // Tulis ke Firebase: set portion & nyalakan manual_feed
+    await _controlRef.update({'portion': _sliderPortion, 'manual_feed': true});
+
+    // Tampilkan snackbar konfirmasi
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Perintah beri pakan ${_sliderPortion}g dikirim',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: kPrimary,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // manual_feed akan di-reset ke false oleh ESP/device setelah selesai
+    // _listenControl() akan otomatis set _isLoadingPakan = false
+    // Safety fallback: timeout 10 detik
+    await Future.delayed(const Duration(seconds: 10));
+    if (mounted && _isLoadingPakan) {
+      setState(() => _isLoadingPakan = false);
+      await _controlRef.update({'manual_feed': false});
+    }
   }
 
-  void _onBeriAir() async {
-    if (!_isDeviceConnected) {
-      return;
-    }
+  // ── Aksi: Beri Air ────────────────────────────────────────
+  Future<void> _onBeriAir() async {
+    if (!_isDeviceConnected || _isLoadingAir) return;
 
     await _airBtnController.forward();
     await _airBtnController.reverse();
+
     setState(() => _isLoadingAir = true);
-    await _backend.sendWaterCommand(_maxVolumeAir);
-    setState(() {
-      _volumeAir = _maxVolumeAir;
-      _isLoadingAir = false;
+
+    // Tulis ke Firebase: set water_volume & nyalakan manual_water
+    await _controlRef.update({
+      'water_volume': _sliderWater,
+      'manual_water': true,
     });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Perintah beri air ${_sliderWater}ml dikirim',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: const Color(0xFF1976D2),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // Safety fallback timeout
+    await Future.delayed(const Duration(seconds: 10));
+    if (mounted && _isLoadingAir) {
+      setState(() => _isLoadingAir = false);
+      await _controlRef.update({'manual_water': false});
+    }
   }
 
-  // --------------------------------------------------------
+  // ============================================================
   //  BUILD
-  // --------------------------------------------------------
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -143,32 +237,38 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
         children: [
           _buildTopAppBar(),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
-              child: ResponsiveContent(
-                child: Column(
-                  children: [
-                    _buildDeviceStatus(),
-                    const SizedBox(height: 20),
-                    _buildBeriPakanCard(),
-                    const SizedBox(height: 20),
-                    _buildBeriAirCard(),
-                  ],
-                ),
-              ),
-            ),
+            child: _isInitializing
+                ? const Center(
+                    child: CircularProgressIndicator(color: kPrimary),
+                  )
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
+                    child: ResponsiveContent(
+                      child: Column(
+                        children: [
+                          _buildDeviceStatus(),
+                          const SizedBox(height: 20),
+                          _buildBeriPakanCard(),
+                          const SizedBox(height: 20),
+                          _buildBeriAirCard(),
+                          if (_reloadSched) ...[
+                            const SizedBox(height: 20),
+                            _buildReloadSchedBanner(),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
           ),
         ],
       ),
     );
   }
 
-  // --------------------------------------------------------
-  //  TOP APP BAR
-  // --------------------------------------------------------
+  // ── Top App Bar ──────────────────────────────────────────
   Widget _buildTopAppBar() {
     return Container(
-      color: const Color(0xFFD62818),
+      color: kPrimary,
       padding: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + 12,
         bottom: 16,
@@ -181,7 +281,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
               Text(
                 'Kontrol Manual',
                 style: GoogleFonts.manrope(
-                  fontSize: 22, // Disesuaikan sedikit agar seimbang dengan Home
+                  fontSize: 22,
                   fontWeight: FontWeight.w800,
                   color: Colors.white,
                   letterSpacing: -0.3,
@@ -194,9 +294,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     );
   }
 
-  // --------------------------------------------------------
-  //  DEVICE STATUS
-  // --------------------------------------------------------
+  // ── Device Status ────────────────────────────────────────
   Widget _buildDeviceStatus() {
     final statusColor = _isDeviceConnected
         ? const Color(0xFF10B981)
@@ -247,17 +345,58 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          // Live indicator ketika ada aksi berjalan
+          if (_manualFeed || _manualWater)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: kPrimary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                _manualFeed ? 'Memberi Pakan...' : 'Memberi Air...',
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: kPrimary,
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 
-  // --------------------------------------------------------
-  //  BERI PAKAN CARD
-  // --------------------------------------------------------
-  Widget _buildBeriPakanCard() {
-    final pakanProgress = _porsiPakan / _maxPorsiPakan;
+  // ── Reload Sched Banner ───────────────────────────────────
+  Widget _buildReloadSchedBanner() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFEF3C7),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.sync_rounded, color: Color(0xFFF59E0B), size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Jadwal sedang dimuat ulang oleh perangkat...',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF92400E),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
+  // ── Beri Pakan Card ──────────────────────────────────────
+  Widget _buildBeriPakanCard() {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -306,9 +445,9 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
             ],
           ),
 
-          const SizedBox(height: 18),
+          const SizedBox(height: 20),
 
-          // Porsi Progress Bar
+          // Progress Sisa Pakan (dari status Firebase)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -321,7 +460,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                 ),
               ),
               Text(
-                '${(pakanProgress * 100).round()}%',
+                '${(_feedProgress * 100).round()}%  •  ${_feedWeight.toStringAsFixed(1)} kg',
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
@@ -334,7 +473,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
-              value: pakanProgress,
+              value: _feedProgress,
               minHeight: 8,
               backgroundColor: kSurfaceContainerHighest,
               valueColor: const AlwaysStoppedAnimation<Color>(kPrimary),
@@ -343,7 +482,82 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
 
           const SizedBox(height: 20),
 
-          // Beri Pakan Button
+          // Slider Porsi
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Porsi pakan',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: kOnSurfaceVariant,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: kPrimary.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$_sliderPortion gram',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: kPrimary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: kPrimary,
+              inactiveTrackColor: kSurfaceContainerHighest,
+              thumbColor: kPrimary,
+              overlayColor: kPrimary.withOpacity(0.1),
+              trackHeight: 4,
+            ),
+            child: Slider(
+              value: _sliderPortion.toDouble(),
+              min: 50,
+              max: 500,
+              divisions: 9,
+              onChanged: _isLoadingPakan
+                  ? null
+                  : (val) => setState(() => _sliderPortion = val.toInt()),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '50g',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: kOnSurfaceVariant,
+                  ),
+                ),
+                Text(
+                  '500g',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: kOnSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Tombol Beri Pakan
           ScaleTransition(
             scale: _pakanBtnScale,
             child: GestureDetector(
@@ -354,19 +568,26 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                 duration: const Duration(milliseconds: 200),
                 height: 56,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [kPrimary, kPrimaryContainer],
+                  gradient: LinearGradient(
+                    colors: _isLoadingPakan || !_isDeviceConnected
+                        ? [
+                            kPrimary.withOpacity(0.4),
+                            kPrimaryContainer.withOpacity(0.4),
+                          ]
+                        : [kPrimary, kPrimaryContainer],
                     begin: Alignment.centerLeft,
                     end: Alignment.centerRight,
                   ),
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: kPrimary.withOpacity(0.3),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+                  boxShadow: _isLoadingPakan || !_isDeviceConnected
+                      ? []
+                      : [
+                          BoxShadow(
+                            color: kPrimary.withOpacity(0.3),
+                            blurRadius: 24,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -388,7 +609,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                       ),
                     const SizedBox(width: 10),
                     Text(
-                      'Beri Pakan',
+                      _isLoadingPakan ? 'Mengirim Pakan...' : 'Beri Pakan',
                       style: GoogleFonts.inter(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
@@ -406,11 +627,9 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     );
   }
 
-  // --------------------------------------------------------
-  //  BERI AIR CARD
-  // --------------------------------------------------------
+  // ── Beri Air Card ────────────────────────────────────────
   Widget _buildBeriAirCard() {
-    final airProgress = _volumeAir / _maxVolumeAir;
+    const blueColor = Color(0xFF1976D2);
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -436,12 +655,12 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1976D2).withOpacity(0.1),
+                  color: blueColor.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(
                   Icons.water_drop_rounded,
-                  color: Color(0xFF1976D2),
+                  color: blueColor,
                   size: 26,
                 ),
               ),
@@ -461,8 +680,9 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
             ],
           ),
 
-          const SizedBox(height: 18),
+          const SizedBox(height: 20),
 
+          // Progress Sisa Air (dari status Firebase)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -475,11 +695,11 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                 ),
               ),
               Text(
-                '${(airProgress * 100).round()}%',
+                '${(_waterProgress * 100).round()}%  •  ${_waterWeight.toStringAsFixed(1)} L',
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
-                  color: const Color(0xFF1976D2),
+                  color: blueColor,
                 ),
               ),
             ],
@@ -488,18 +708,91 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
-              value: airProgress,
+              value: _waterProgress,
               minHeight: 8,
               backgroundColor: kSurfaceContainerHighest,
-              valueColor: const AlwaysStoppedAnimation<Color>(
-                Color(0xFF1976D2),
-              ),
+              valueColor: const AlwaysStoppedAnimation<Color>(blueColor),
             ),
           ),
 
           const SizedBox(height: 20),
 
-          // Beri Air Button
+          // Slider Volume Air
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Volume air',
+                style: GoogleFonts.inter(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: kOnSurfaceVariant,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: blueColor.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$_sliderWater ml',
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: blueColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: blueColor,
+              inactiveTrackColor: kSurfaceContainerHighest,
+              thumbColor: blueColor,
+              overlayColor: blueColor.withOpacity(0.1),
+              trackHeight: 4,
+            ),
+            child: Slider(
+              value: _sliderWater.toDouble(),
+              min: 50,
+              max: 1000,
+              divisions: 19,
+              onChanged: _isLoadingAir
+                  ? null
+                  : (val) => setState(() => _sliderWater = val.toInt()),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '50ml',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: kOnSurfaceVariant,
+                  ),
+                ),
+                Text(
+                  '1000ml',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: kOnSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Tombol Beri Air
           ScaleTransition(
             scale: _airBtnScale,
             child: GestureDetector(
@@ -508,17 +801,19 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                 duration: const Duration(milliseconds: 200),
                 height: 56,
                 decoration: BoxDecoration(
-                  color: _isLoadingAir
-                      ? const Color(0xFF1976D2).withOpacity(0.8)
-                      : const Color(0xFF1976D2),
+                  color: _isLoadingAir || !_isDeviceConnected
+                      ? blueColor.withOpacity(0.4)
+                      : blueColor,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF1976D2).withOpacity(0.3),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+                  boxShadow: _isLoadingAir || !_isDeviceConnected
+                      ? []
+                      : [
+                          BoxShadow(
+                            color: blueColor.withOpacity(0.3),
+                            blurRadius: 24,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -540,7 +835,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                       ),
                     const SizedBox(width: 10),
                     Text(
-                      'Beri Air',
+                      _isLoadingAir ? 'Mengirim Air...' : 'Beri Air',
                       style: GoogleFonts.inter(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,

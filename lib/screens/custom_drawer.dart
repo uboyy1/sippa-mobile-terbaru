@@ -119,7 +119,7 @@ class CustomDrawer extends StatelessWidget {
                   ),
                   _drawerItem(
                     icon: Icons.person_rounded,
-                    label: 'Account',
+                    label: 'Settings',
                     onTap: () {
                       onNavigateTab(4); // Pindah ke Tab Settings
                       Navigator.pop(context); // Tutup Drawer

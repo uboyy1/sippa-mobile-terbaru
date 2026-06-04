@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../widgets/responsive_content.dart';
 
 // ============================================================
-//  COLOR CONSTANTS (matches HTML theme)
+//  COLOR CONSTANTS
 // ============================================================
 const Color kPrimary = Color(0xFFD62818);
 const Color kOnPrimary = Color(0xFFFFFFFF);
@@ -35,13 +35,16 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   // 0 = Pakan + Air, 1 = Pakan Saja, 2 = Air Saja
   int _selectedJenis = 0;
 
+  // ── NEWː Porsi pakan & volume air ───────────────────────
+  int _porsiPakan = 200; // gram, range 50–500
+  int _volumeAir = 500; // ml,   range 50–1000
+
   // S M T W T F S  (index 0..6)
   final List<bool> _hariAktif = [true, true, true, true, true, false, false];
   final List<String> _hariLabel = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
   bool _ulangiSetiapMinggu = true;
 
-  // FixedExtentScrollController untuk time picker
   late FixedExtentScrollController _hourController;
   late FixedExtentScrollController _minuteController;
 
@@ -64,16 +67,29 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
         _selectedJenis = 2;
       }
 
+      // Load porsi & volume dari Firebase jika ada
+      _porsiPakan = (initial['portion'] as num?)?.toInt() ?? 200;
+      _porsiPakan = _porsiPakan.clamp(50, 500);
+
+      final waterRaw = initial['water'];
+      if (waterRaw is num) {
+        _volumeAir = waterRaw.toInt().clamp(50, 1000);
+      } else if (waterRaw is String && waterRaw.isNotEmpty) {
+        _volumeAir = (int.tryParse(waterRaw) ?? 500).clamp(50, 1000);
+      }
+
       final activeDays = initial['activeDays'];
       if (activeDays is List && activeDays.length == 7) {
         _hariAktif
           ..clear()
-          ..addAll(activeDays.map((day) => day == true));
+          ..addAll(activeDays.map((d) => d == true));
       }
+
       _ulangiSetiapMinggu =
           initial['repeat'] == 'Setiap Minggu' ||
           initial['repeat'] == 'Setiap Hari';
     }
+
     _hourController = FixedExtentScrollController(initialItem: _selectedHour);
     _minuteController = FixedExtentScrollController(
       initialItem: _selectedMinute ~/ 5,
@@ -87,9 +103,13 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     super.dispose();
   }
 
-  // --------------------------------------------------------
+  // ── Apakah pakan ditampilkan? ────────────────────────────
+  bool get _showPakan => _selectedJenis == 0 || _selectedJenis == 1;
+  bool get _showAir => _selectedJenis == 0 || _selectedJenis == 2;
+
+  // ============================================================
   //  BUILD
-  // --------------------------------------------------------
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -105,6 +125,13 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
               const SizedBox(height: 20),
               _buildJenisPemberian(),
               const SizedBox(height: 20),
+
+              // ── NEW: Porsi section (muncul sesuai jenis) ──
+              if (_showPakan || _showAir) ...[
+                _buildPorsiSection(),
+                const SizedBox(height: 20),
+              ],
+
               _buildHariAktif(),
               const SizedBox(height: 20),
               _buildUlangi(),
@@ -117,12 +144,10 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  //  APP BAR
-  // --------------------------------------------------------
+  // ── App Bar ──────────────────────────────────────────────
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     return AppBar(
-      backgroundColor: const Color(0xFFD62818),
+      backgroundColor: kPrimary,
       foregroundColor: Colors.white,
       elevation: 0,
       centerTitle: true,
@@ -155,9 +180,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  //  SECTION 1 – WAKTU PEMBERIAN
-  // --------------------------------------------------------
+  // ── Section 1: Waktu Pemberian ───────────────────────────
   Widget _buildWaktuPemberian() {
     return _card(
       child: Column(
@@ -174,7 +197,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // JAM
                 SizedBox(
                   width: 80,
                   child: _buildTimeDrum(
@@ -184,7 +206,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                     onChanged: (i) => setState(() => _selectedHour = i),
                   ),
                 ),
-                Text(
+                const Text(
                   ':',
                   style: TextStyle(
                     fontSize: 40,
@@ -193,7 +215,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                     fontFamily: 'Manrope',
                   ),
                 ),
-                // MENIT (kelipatan 5)
                 SizedBox(
                   width: 80,
                   child: _buildTimeDrum(
@@ -218,7 +239,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     required ValueChanged<int> onChanged,
   }) {
     return ShaderMask(
-      shaderCallback: (rect) => LinearGradient(
+      shaderCallback: (rect) => const LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [
@@ -227,7 +248,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
           Colors.transparent,
           Colors.white,
         ],
-        stops: const [0.0, 0.25, 0.75, 1.0],
+        stops: [0.0, 0.25, 0.75, 1.0],
       ).createShader(rect),
       blendMode: BlendMode.dstOut,
       child: ListWheelScrollView.useDelegate(
@@ -260,9 +281,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  //  SECTION 2 – JENIS PEMBERIAN
-  // --------------------------------------------------------
+  // ── Section 2: Jenis Pemberian ───────────────────────────
   Widget _buildJenisPemberian() {
     final items = ['Pakan + Air', 'Pakan Saja', 'Air Saja'];
     return Column(
@@ -323,9 +342,207 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  //  SECTION 5 – HARI AKTIF
-  // --------------------------------------------------------
+  // ── Section 3 (NEW): Porsi Pakan & Volume Air ────────────
+  Widget _buildPorsiSection() {
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionTitle('Jumlah Pemberian', showUnderline: true),
+
+          // ── Slider Porsi Pakan ───────────────────────────
+          if (_showPakan) ...[
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: kPrimary.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.grain_rounded,
+                    color: kPrimary,
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Porsi Pakan',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: kOnSurface,
+                        ),
+                      ),
+                      // Badge nilai
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: kPrimary,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '$_porsiPakan g',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: kOnPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                activeTrackColor: kPrimary,
+                inactiveTrackColor: kSurfaceContainerHighest,
+                thumbColor: kPrimary,
+                overlayColor: kPrimary.withOpacity(0.12),
+                trackHeight: 4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              ),
+              child: Slider(
+                value: _porsiPakan.toDouble(),
+                min: 50,
+                max: 500,
+                divisions: 9, // step 50g
+                onChanged: (val) => setState(() => _porsiPakan = val.toInt()),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '50 g',
+                    style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
+                  ),
+                  Text(
+                    '500 g',
+                    style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Divider jika keduanya tampil
+          if (_showPakan && _showAir) ...[
+            const SizedBox(height: 12),
+            Divider(color: kSurfaceContainerHighest, thickness: 1),
+          ],
+
+          // ── Slider Volume Air ───────────────────────────
+          if (_showAir) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1976D2).withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.water_drop_rounded,
+                    color: Color(0xFF1976D2),
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Volume Air',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: kOnSurface,
+                        ),
+                      ),
+                      // Badge nilai
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1976D2),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '$_volumeAir ml',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: kOnPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                activeTrackColor: const Color(0xFF1976D2),
+                inactiveTrackColor: kSurfaceContainerHighest,
+                thumbColor: const Color(0xFF1976D2),
+                overlayColor: const Color(0xFF1976D2).withOpacity(0.12),
+                trackHeight: 4,
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+              ),
+              child: Slider(
+                value: _volumeAir.toDouble(),
+                min: 50,
+                max: 1000,
+                divisions: 19, // step 50ml
+                onChanged: (val) => setState(() => _volumeAir = val.toInt()),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '50 ml',
+                    style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
+                  ),
+                  Text(
+                    '1000 ml',
+                    style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Section 4: Hari Aktif ────────────────────────────────
   Widget _buildHariAktif() {
     return _card(
       child: Column(
@@ -437,9 +654,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  //  SECTION 6 – ULANGI
-  // --------------------------------------------------------
+  // ── Section 5: Ulangi ────────────────────────────────────
   Widget _buildUlangi() {
     return _card(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
@@ -467,9 +682,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  //  ACTIONS
-  // --------------------------------------------------------
+  // ── Actions ──────────────────────────────────────────────
   Widget _buildActions(BuildContext context) {
     return Column(
       children: [
@@ -519,38 +732,42 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     );
   }
 
-  // --------------------------------------------------------
-  //  SAVE HANDLER
-  // --------------------------------------------------------
+  // ── Save Handler ─────────────────────────────────────────
   void _onSave() {
     final aktif = <String>[];
     for (int i = 0; i < 7; i++) {
       if (_hariAktif[i]) aktif.add(_hariLabel[i]);
     }
+
     final time =
         '${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}';
+
+    final hasPakan = _selectedJenis == 0 || _selectedJenis == 1;
+    final hasAir = _selectedJenis == 0 || _selectedJenis == 2;
+
     final result = {
       'time': time,
       'repeat': _ulangiSetiapMinggu ? 'Setiap Minggu' : 'Khusus',
-      'pakan': _selectedJenis == 0 || _selectedJenis == 1,
-      'air': _selectedJenis == 0 || _selectedJenis == 2,
+      'pakan': hasPakan,
+      'air': hasAir,
+      // ── NEW fields ──
+      'portion': hasPakan ? _porsiPakan : 0,
+      'water': hasAir ? _volumeAir : 0,
+      // ────────────────
       'days': List<String>.from(_hariLabel),
       'activeDays': List<bool>.from(_hariAktif),
       'isActive': true,
     };
 
-    debugPrint('=== Simpan Jadwal ===');
-    debugPrint('Waktu : $time');
-    debugPrint(
-      'Jenis : ${['Pakan + Air', 'Pakan Saja', 'Air Saja'][_selectedJenis]}',
-    );
-    debugPrint('Mode  : Isi otomatis sampai penuh');
-    debugPrint('Hari  : ${aktif.join(', ')}');
-    debugPrint('Ulangi: $_ulangiSetiapMinggu');
-
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Jadwal $time berhasil disimpan!'),
+        content: Text(
+          'Jadwal $time — '
+          '${hasPakan ? '$_porsiPakan g pakan' : ''}'
+          '${hasPakan && hasAir ? ' & ' : ''}'
+          '${hasAir ? '$_volumeAir ml air' : ''}'
+          ' berhasil disimpan!',
+        ),
         backgroundColor: kPrimary,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -560,9 +777,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     Navigator.of(context).pop(result);
   }
 
-  // --------------------------------------------------------
-  //  HELPERS
-  // --------------------------------------------------------
+  // ── Helpers ──────────────────────────────────────────────
   Widget _card({required Widget child, EdgeInsetsGeometry? padding}) {
     return Container(
       width: double.infinity,
@@ -573,7 +788,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
         border: Border.all(color: kSurfaceContainerLow),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFFD62818).withOpacity(0.04),
+            color: kPrimary.withOpacity(0.04),
             blurRadius: 24,
             offset: const Offset(0, 6),
           ),
