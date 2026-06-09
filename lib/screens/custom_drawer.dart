@@ -128,14 +128,15 @@ class CustomDrawer extends StatelessWidget {
                   _drawerItem(
                     icon: Icons.notifications_rounded,
                     label: 'Notifikasi',
-                    onTap: () {
+                    onTap: () async {
                       Navigator.pop(context); // Tutup drawer dulu
-                      Navigator.push(
+                      final targetTab = await Navigator.push<int>(
                         context,
                         MaterialPageRoute(
                           builder: (context) => const NotifikasiScreen(),
                         ),
                       );
+                      if (targetTab != null) onNavigateTab(targetTab);
                     },
                   ),
 
@@ -157,15 +158,6 @@ class CustomDrawer extends StatelessWidget {
                     onTap: () {
                       Navigator.pop(context);
                       onNavigateTab(4);
-                    },
-                  ),
-                  _drawerItem(
-                    icon: Icons.logout_rounded,
-                    label: 'Keluar',
-                    isDanger: true,
-                    onTap: () {
-                      Navigator.pop(context);
-                      // TODO: Proses Logout
                     },
                   ),
                 ],

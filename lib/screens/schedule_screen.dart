@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:intl/intl.dart';
 import 'tambah_jadwal_screen.dart';
 import '../widgets/responsive_content.dart';
 
@@ -23,10 +26,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   // ── Firebase ────────────────────────────────────────────
   late final DatabaseReference _schedulesRef;
+  late final DatabaseReference _scheduleRunsRef;
+  late final DatabaseReference _controlRef;
+  late final DatabaseReference _statusRef;
+  late final DatabaseReference _notificationsRef;
+  late final DatabaseReference _logsRef;
+  late final DatabaseReference _settingsRef;
 
   // Semua jadwal dari Firebase, key = jadwal_id (e.g. "jadwal_1")
   Map<String, Map<String, dynamic>> _allSchedules = {};
+  Map<String, Map<String, dynamic>> _todayRunStatus = {};
+  double _feedWeight = 0;
+  double _waterWeight = 0;
+  double _feedLimit = 500;
+  double _waterLimit = 500;
   bool _isLoading = true;
+  Timer? _clockTimer;
 
   // ── Filter ──────────────────────────────────────────────
   String _selectedDay = 'Semua';
@@ -53,16 +68,150 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   };
 
   // Label singkat hari untuk pill (urutan sesuai Firebase days index)
-  static const List<String> _dayLabels = ['S', 'S', 'R', 'K', 'J', 'S', 'M'];
+  static const List<String> _dayLabels = [
+    'Sen',
+    'Sel',
+    'Rab',
+    'Kam',
+    'Jum',
+    'Sab',
+    'Min',
+  ];
+
+  DateTime get _nowWita => DateTime.now().toUtc().add(const Duration(hours: 8));
+  int get _todayWitaIndex => _nowWita.weekday - 1;
+  String get _todayDateKey => DateFormat('yyyy-MM-dd').format(_nowWita);
+  DateTime get _todayStart =>
+      DateTime(_nowWita.year, _nowWita.month, _nowWita.day);
+  DateTime get _todayEnd => _todayStart.add(const Duration(days: 1));
+
+  bool _isScheduleDue(String time) {
+    final parts = time.split(':');
+    final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 0;
+    final minute = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
+    final scheduled = DateTime(
+      _nowWita.year,
+      _nowWita.month,
+      _nowWita.day,
+      hour,
+      minute,
+    );
+    return !_nowWita.isBefore(scheduled);
+  }
+
+  DateTime? _parseStartAt(Object? raw) {
+    if (raw is num) {
+      return DateTime.fromMillisecondsSinceEpoch(raw.toInt());
+    }
+    return DateTime.tryParse(raw?.toString() ?? '');
+  }
+
+  bool _startsAfterToday(Map<String, dynamic> schedule) {
+    final startAt = _parseStartAt(schedule['start_at']);
+    return startAt != null && !startAt.isBefore(_todayEnd);
+  }
+
+  bool _isActiveOnToday(Map<String, dynamic> schedule) {
+    final activeDays = List<bool>.from(schedule['activeDays']);
+    return schedule['isActive'] == true &&
+        _todayWitaIndex < activeDays.length &&
+        activeDays[_todayWitaIndex] &&
+        !_startsAfterToday(schedule);
+  }
+
+  int _feedPercent() => (_feedWeight / _feedLimit * 100).clamp(0, 100).toInt();
+  int _waterPercent() =>
+      (_waterWeight / _waterLimit * 100).clamp(0, 100).toInt();
+
+  double _toStockUnit(Object? raw, double limit) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    if (limit <= 0) return value;
+    return value.clamp(0, limit).toDouble();
+  }
+
+  double _toPositiveLimit(Object? raw, double fallback) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    return value > 0 ? value : fallback;
+  }
+
+  bool _shouldCancelSchedule(Map<String, dynamic> schedule) {
+    final pakan = schedule['pakan'] == true;
+    final air = schedule['air'] == true;
+    return (pakan && _feedPercent() > 50) || (air && _waterPercent() > 50);
+  }
+
+  String _cancelReason(Map<String, dynamic> schedule) {
+    final reasons = <String>[];
+    if (schedule['pakan'] == true && _feedPercent() > 50) {
+      reasons.add('pakan ${_feedPercent()}%');
+    }
+    if (schedule['air'] == true && _waterPercent() > 50) {
+      reasons.add('air ${_waterPercent()}%');
+    }
+    return reasons.join(' dan ');
+  }
 
   @override
   void initState() {
     super.initState();
     _schedulesRef = FirebaseDatabase.instance.ref('schedules');
+    _scheduleRunsRef = FirebaseDatabase.instance.ref('schedule_runs');
+    _controlRef = FirebaseDatabase.instance.ref('control');
+    _statusRef = FirebaseDatabase.instance.ref('status');
+    _notificationsRef = FirebaseDatabase.instance.ref('notifications');
+    _logsRef = FirebaseDatabase.instance.ref('logs');
+    _settingsRef = FirebaseDatabase.instance.ref('settings');
+    _listenStatus();
+    _listenSettings();
     _listenSchedules();
+    _listenTodayRuns();
+    _clockTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) return;
+      _syncTodayRuns(_allSchedules.values.toList());
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _clockTimer?.cancel();
+    super.dispose();
   }
 
   // ── Firebase Listener ───────────────────────────────────
+  void _listenStatus() {
+    _statusRef.onValue.listen((event) {
+      if (!mounted) return;
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+      setState(() {
+        _feedWeight = _toStockUnit(data['feed_weight'], _feedLimit);
+        _waterWeight = _toStockUnit(data['water_weight'], _waterLimit);
+      });
+      _syncTodayRuns(_allSchedules.values.toList());
+    });
+  }
+
+  void _listenSettings() {
+    _settingsRef.onValue.listen((event) {
+      if (!mounted) return;
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+
+      setState(() {
+        _feedLimit = _toPositiveLimit(data['feed_limit'], _feedLimit);
+        _waterLimit = _toPositiveLimit(data['water_limit'], _waterLimit);
+        _feedWeight = _feedWeight.clamp(0, _feedLimit).toDouble();
+        _waterWeight = _waterWeight.clamp(0, _waterLimit).toDouble();
+      });
+      _syncTodayRuns(_allSchedules.values.toList());
+    });
+  }
+
   void _listenSchedules() {
     _schedulesRef.onValue.listen((event) {
       final raw = event.snapshot.value;
@@ -100,19 +249,29 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
         // type: "pakan" | "air" | "pakan_air"
         final type = jadwal['type']?.toString() ?? 'pakan_air';
+        final repeatRaw = jadwal['repeat'];
+        final repeatsWeekly =
+            repeatRaw == true ||
+            repeatRaw == 'Setiap Minggu' ||
+            repeatRaw == 'Setiap Hari';
+        final waterRaw = jadwal['water'];
+        final water = waterRaw is num
+            ? waterRaw.toInt()
+            : int.tryParse(waterRaw?.toString() ?? '') ?? 0;
 
         parsed[key] = {
           'id': key,
           'time': jadwal['time']?.toString() ?? '00:00',
-          'repeat': (jadwal['repeat'] == true) ? 'Setiap Hari' : 'Khusus',
+          'repeat': repeatsWeekly ? 'Setiap Minggu' : 'Khusus',
           'pakan': type == 'pakan' || type == 'pakan_air',
           'air': type == 'air' || type == 'pakan_air',
           'type': type,
           'portion': (jadwal['portion'] as num?)?.toInt() ?? 0,
-          'water': jadwal['water']?.toString() ?? '',
+          'water': water,
           'days': _dayLabels,
           'activeDays': activeDays,
           'isActive': jadwal['active'] == true,
+          'start_at': jadwal['start_at'],
         };
       });
 
@@ -120,11 +279,150 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       final sortedEntries = parsed.entries.toList()
         ..sort((a, b) => a.value['time'].compareTo(b.value['time']));
 
+      _syncTodayRuns(sortedEntries.map((e) => e.value).toList());
       setState(() {
         _allSchedules = Map.fromEntries(sortedEntries);
         _isLoading = false;
       });
     });
+  }
+
+  void _listenTodayRuns() {
+    _scheduleRunsRef.child(_todayDateKey).onValue.listen((event) {
+      if (!mounted) return;
+      final raw = event.snapshot.value;
+      if (raw == null) {
+        setState(() => _todayRunStatus = {});
+        return;
+      }
+
+      final rawMap = Map<String, dynamic>.from(raw as Map);
+      final parsed = <String, Map<String, dynamic>>{};
+      rawMap.forEach((key, value) {
+        parsed[key] = Map<String, dynamic>.from(value as Map);
+      });
+      setState(() => _todayRunStatus = parsed);
+    });
+  }
+
+  Future<void> _syncTodayRuns(List<Map<String, dynamic>> schedules) async {
+    final today = _todayDateKey;
+    final runsSnapshot = await _scheduleRunsRef.get();
+    final runsRaw = runsSnapshot.value;
+    if (runsRaw is Map) {
+      for (final key in runsRaw.keys) {
+        if (key.toString() != today) {
+          await _scheduleRunsRef.child(key.toString()).remove();
+        }
+      }
+    }
+
+    final todayRef = _scheduleRunsRef.child(today);
+    for (final schedule in schedules) {
+      final id = schedule['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      if (!_isActiveOnToday(schedule)) {
+        continue;
+      }
+
+      final existingSnapshot = await todayRef.child(id).get();
+      final existing = existingSnapshot.value is Map
+          ? Map<String, dynamic>.from(existingSnapshot.value as Map)
+          : <String, dynamic>{};
+      final time = schedule['time']?.toString() ?? '00:00';
+      final due = _isScheduleDue(time);
+      final isCancelled =
+          existing['cancelled'] == true || existing['status'] == 'dibatalkan';
+      final isDone =
+          !isCancelled &&
+          (existing['done'] == true ||
+              existing['status'] == 'selesai' ||
+              (due && !_shouldCancelSchedule(schedule)));
+      final shouldCancel = !isDone && due && _shouldCancelSchedule(schedule);
+      final shouldDispatch = isDone && due && existing['dispatched_at'] == null;
+      await todayRef.child(id).update({
+        'time': time,
+        'pakan': schedule['pakan'],
+        'air': schedule['air'],
+        'portion': schedule['portion'],
+        'water': schedule['water'],
+        'status': shouldCancel
+            ? 'dibatalkan'
+            : (isDone ? 'selesai' : 'menunggu'),
+        'done': isDone,
+        'cancelled': shouldCancel || isCancelled,
+        if (shouldCancel) 'cancel_reason': _cancelReason(schedule),
+        if (isDone && existing['completed_at'] == null)
+          'completed_at': ServerValue.timestamp,
+        if (shouldDispatch) 'dispatched_at': ServerValue.timestamp,
+        if (shouldCancel && existing['cancelled_at'] == null)
+          'cancelled_at': ServerValue.timestamp,
+        'date': today,
+      });
+      if (shouldCancel) {
+        await _recordCancelledSchedule(id, schedule, time);
+      } else if (shouldDispatch) {
+        await _dispatchAutomaticSchedule(schedule);
+      }
+      if ((shouldCancel || isDone) && schedule['repeat'] != 'Setiap Minggu') {
+        await _schedulesRef.child(id).update({'active': false});
+      }
+    }
+  }
+
+  Future<void> _dispatchAutomaticSchedule(Map<String, dynamic> schedule) async {
+    final updates = <String, Object?>{};
+    if (schedule['pakan'] == true) {
+      final emptyFeed = (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
+      updates['portion'] = ((schedule['portion'] as num?)?.toInt() ?? 0)
+          .clamp(0, emptyFeed)
+          .toInt();
+      updates['manual_feed'] = true;
+    }
+    if (schedule['air'] == true) {
+      final emptyWater = (_waterLimit - _waterWeight)
+          .clamp(0, _waterLimit)
+          .floor();
+      updates['water_volume'] = ((schedule['water'] as num?)?.toInt() ?? 0)
+          .clamp(0, emptyWater)
+          .toInt();
+      updates['manual_water'] = true;
+    }
+    if (updates.isNotEmpty) {
+      await _controlRef.update(updates);
+    }
+  }
+
+  Future<void> _recordCancelledSchedule(
+    String id,
+    Map<String, dynamic> schedule,
+    String time,
+  ) async {
+    final pakan = schedule['pakan'] == true;
+    final air = schedule['air'] == true;
+    final label = pakan && air ? 'pakan dan air' : (pakan ? 'pakan' : 'air');
+    final desc =
+        'Jadwal pemberian $label pukul $time dibatalkan karena persediaan ${_cancelReason(schedule)} masih mencukupi (di atas 50%).';
+    final key = 'jadwal_batal_${_todayDateKey}_$id';
+
+    await _logsRef.child(key).update({
+      'timestamp': ServerValue.timestamp,
+      'type': 'jadwal_dibatalkan',
+      'status': 'dibatalkan',
+      'title': 'Jadwal $time dibatalkan',
+      'desc': desc,
+    });
+    final notificationSnapshot = await _notificationsRef.child(key).get();
+    if (!notificationSnapshot.exists) {
+      await _notificationsRef.child(key).set({
+        'timestamp': ServerValue.timestamp,
+        'type': 'jadwal_dibatalkan',
+        'target': 'jadwal',
+        'title': 'Jadwal Otomatis Dibatalkan',
+        'desc': desc,
+        'read': false,
+      });
+    }
   }
 
   // ── Helper: filter jadwal berdasarkan hari terpilih ─────
@@ -134,7 +432,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     if (dayIdx == null) return _allSchedules.entries.toList();
     return _allSchedules.entries.where((e) {
       final activeDays = e.value['activeDays'] as List<bool>;
-      return dayIdx < activeDays.length && activeDays[dayIdx];
+      final isSelectedDayActive =
+          dayIdx < activeDays.length && activeDays[dayIdx];
+      return isSelectedDayActive;
     }).toList();
   }
 
@@ -147,8 +447,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       _filteredEntries.where((e) => e.value['isActive'] != true).toList();
 
   // Hitung jumlah jadwal aktif hari ini (tanpa filter hari)
-  int get _totalAktifHariIni =>
-      _allSchedules.values.where((v) => v['isActive'] == true).length;
+  int get _totalAktifHariIni => _allSchedules.values.where((v) {
+    return _isActiveOnToday(v);
+  }).length;
+
+  int get _totalJadwalAktif => _allSchedules.values.where((v) {
+    return v['isActive'] == true;
+  }).length;
 
   // ── Toggle active di Firebase ───────────────────────────
   Future<void> _toggleActive(String id, bool currentValue) async {
@@ -208,19 +513,21 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final pakan = data['pakan'] == true;
     final air = data['air'] == true;
     String type = 'pakan';
-    if (pakan && air)
+    if (pakan && air) {
       type = 'pakan_air';
-    else if (air)
+    } else if (air) {
       type = 'air';
+    }
 
     await _schedulesRef.child(id).set({
       'active': data['isActive'] ?? true,
       'days': daysMap,
       'portion': data['portion'] ?? 200,
-      'repeat': data['repeat'] == 'Setiap Hari',
+      'repeat': data['repeat'] == 'Setiap Minggu',
       'time': data['time'] ?? '08:00',
       'type': type,
-      'water': data['water'] ?? '',
+      'water': data['water'] ?? 0,
+      'start_at': data['start_at'],
     });
   }
 
@@ -274,7 +581,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           child: Row(
             children: [
               Text(
-                'Jadwal Pakan',
+                'Jadwal Pakan & Air',
                 style: GoogleFonts.manrope(
                   fontSize: 22,
                   fontWeight: FontWeight.w800,
@@ -318,13 +625,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               size: 22,
             ),
             const SizedBox(width: 12),
-            Text(
-              '$_totalAktifHariIni Jadwal Aktif Hari Ini',
-              style: GoogleFonts.manrope(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
-                letterSpacing: -0.3,
+            Expanded(
+              child: Text(
+                '${_allSchedules.length} Jadwal Tersimpan | $_totalJadwalAktif Aktif | $_totalAktifHariIni Hari Ini',
+                style: GoogleFonts.manrope(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                  letterSpacing: -0.3,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -341,7 +651,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 24),
         itemCount: _days.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (context, i) {
           final isSelected = _selectedDay == _days[i];
           return GestureDetector(
@@ -384,19 +694,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   Widget _buildJadwalList() {
     final aktif = _jadwalAktif;
     final nonAktif = _jadwalNonAktif;
+    final emptyText = _selectedDay == 'Semua'
+        ? 'Belum ada jadwal aktif tersimpan'
+        : 'Tidak ada jadwal aktif untuk hari $_selectedDay';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Jadwal Aktif (Hari Ini)
+          // Jadwal aktif
           if (aktif.isEmpty)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Center(
                 child: Text(
-                  'Tidak ada jadwal aktif',
+                  emptyText,
                   style: GoogleFonts.inter(
                     fontSize: 13,
                     color: onSurfaceVariant,
@@ -446,7 +759,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // ── Jadwal Card (UI sama persis dengan versi dummy) ──────
+  // ── Jadwal Card ─────────────────────────────────────────
   Widget _buildJadwalCard({
     required Map<String, dynamic> jadwal,
     required String id,
@@ -455,6 +768,25 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final bool isActive = jadwal['isActive'] as bool;
     final List<String> days = List<String>.from(jadwal['days']);
     final List<bool> activeDays = List<bool>.from(jadwal['activeDays']);
+    final isActiveToday = _isActiveOnToday(jadwal);
+    final run = isActiveToday ? _todayRunStatus[id] : null;
+    final isCancelled =
+        run?['cancelled'] == true || run?['status'] == 'dibatalkan';
+    final isDone =
+        !isCancelled && (run?['done'] == true || run?['status'] == 'selesai');
+    final statusLabel = !isActive
+        ? 'Nonaktif'
+        : (isActiveToday
+              ? (isDone ? 'Selesai' : (isCancelled ? 'Dibatalkan' : 'Menunggu'))
+              : 'Terjadwal');
+    final statusColor = !isActive
+        ? onSurfaceVariant
+        : (isDone
+              ? const Color(0xFF16A34A)
+              : (isCancelled ? const Color(0xFFF97316) : onSurfaceVariant));
+    final repeatLabel = jadwal['repeat'] == 'Setiap Minggu'
+        ? 'Berulang setiap minggu'
+        : 'Tidak berulang';
 
     return Opacity(
       opacity: isBesok ? 0.85 : 1.0,
@@ -530,13 +862,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                                     ),
                                   ),
                                   child: Text(
-                                    jadwal['repeat'],
+                                    statusLabel,
                                     style: GoogleFonts.inter(
                                       fontSize: 10,
                                       fontWeight: FontWeight.w700,
-                                      color: isActive
-                                          ? primary
-                                          : onSurfaceVariant,
+                                      color: statusColor,
                                       letterSpacing: 0.5,
                                     ),
                                   ),
@@ -610,9 +940,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       runSpacing: 8,
                       children: [
                         if (jadwal['pakan'] == true)
-                          _infoChip(Icons.grain_rounded, 'Pakan'),
+                          _infoChip(
+                            Icons.grain_rounded,
+                            'Pakan ${jadwal['portion']}g',
+                          ),
                         if (jadwal['air'] == true)
-                          _infoChip(Icons.water_drop_rounded, 'Air'),
+                          _infoChip(
+                            Icons.water_drop_rounded,
+                            'Air ${jadwal['water']}ml',
+                          ),
+                        _infoChip(
+                          Icons.calendar_month_rounded,
+                          'Hari ${_activeDayLabel(days, activeDays)}',
+                        ),
+                        _infoChip(Icons.repeat_rounded, repeatLabel),
                       ],
                     ),
 
@@ -625,11 +966,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                       children: List.generate(days.length, (i) {
                         final active = activeDays[i];
                         return Container(
-                          width: 30,
+                          width: 38,
                           height: 30,
                           decoration: BoxDecoration(
                             color: active ? primary : surfaceContainerHigh,
-                            shape: BoxShape.circle,
+                            borderRadius: BorderRadius.circular(999),
                             border: active
                                 ? null
                                 : Border.all(color: outlineVariant),
@@ -663,12 +1004,26 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       children: [
         Icon(icon, size: 16, color: onSurfaceVariant),
         const SizedBox(width: 5),
-        Text(
-          label,
-          style: GoogleFonts.inter(fontSize: 13, color: onSurfaceVariant),
+        ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.of(context).size.width - 96,
+          ),
+          child: Text(
+            label,
+            style: GoogleFonts.inter(fontSize: 13, color: onSurfaceVariant),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );
+  }
+
+  String _activeDayLabel(List<String> days, List<bool> activeDays) {
+    final labels = <String>[];
+    for (var i = 0; i < days.length && i < activeDays.length; i++) {
+      if (activeDays[i]) labels.add(days[i]);
+    }
+    return labels.isEmpty ? 'Belum dipilih' : labels.join(', ');
   }
 
   // ── Bottom Sheet Actions ─────────────────────────────────

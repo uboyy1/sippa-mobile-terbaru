@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:intl/intl.dart';
 import '../widgets/responsive_content.dart';
 
 // ============================================================
@@ -36,6 +37,9 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   // ── Firebase refs ────────────────────────────────────────
   late final DatabaseReference _controlRef;
   late final DatabaseReference _statusRef;
+  late final DatabaseReference _logsRef;
+  late final DatabaseReference _notificationsRef;
+  late final DatabaseReference _settingsRef;
 
   // ── Firebase data (control node) ─────────────────────────
   bool _manualFeed = false;
@@ -54,11 +58,14 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   bool _isLoadingAir = false;
   bool _isInitializing = true;
 
-  // ── Kapasitas maksimum (sesuaikan dengan hardware) ───────
-  static const double _maxFeedKg = 5.0; // 5 kg
-  static const double _maxWaterLiter = 20.0; // 20 liter
+  // ── Kapasitas maksimum dari settings ─────────────────────
+  double _feedLimit = 500.0;
+  double _waterLimit = 500.0;
 
   // ── Slider nilai sementara (sebelum dikirim) ─────────────
+  static const int _stepAmount = 50;
+  static const int _minPortion = 50;
+  static const int _minWaterVolume = 50;
   int _sliderPortion = 200; // gram
   int _sliderWater = 500; // ml
 
@@ -73,9 +80,13 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     super.initState();
     _controlRef = FirebaseDatabase.instance.ref('control');
     _statusRef = FirebaseDatabase.instance.ref('status');
+    _logsRef = FirebaseDatabase.instance.ref('logs');
+    _notificationsRef = FirebaseDatabase.instance.ref('notifications');
+    _settingsRef = FirebaseDatabase.instance.ref('settings');
 
     _listenControl();
     _listenStatus();
+    _listenSettings();
 
     _pakanBtnController = AnimationController(
       vsync: this,
@@ -108,8 +119,8 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
         _reloadSched = data['reload_sched'] == true;
 
         // Sync slider dengan nilai Firebase (hanya jika tidak sedang loading)
-        if (!_isLoadingPakan) _sliderPortion = _portion.clamp(50, 500);
-        if (!_isLoadingAir) _sliderWater = _waterVolume.clamp(50, 1000);
+        if (!_isLoadingPakan) _sliderPortion = _normalizePortion(_portion);
+        if (!_isLoadingAir) _sliderWater = _normalizeWaterVolume(_waterVolume);
 
         // Jika manual_feed berubah jadi false → loading selesai
         if (!_manualFeed && _isLoadingPakan) _isLoadingPakan = false;
@@ -127,10 +138,36 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
       if (!mounted) return;
 
       setState(() {
-        _feedWeight = (data['feed_weight'] as num?)?.toDouble() ?? 0;
-        _waterWeight = (data['water_weight'] as num?)?.toDouble() ?? 0;
+        _feedWeight = _toStockUnit(data['feed_weight'], _feedLimit);
+        _waterWeight = _toStockUnit(data['water_weight'], _waterLimit);
+        if (!_isLoadingPakan) {
+          _sliderPortion = _normalizePortion(_sliderPortion);
+        }
+        if (!_isLoadingAir) {
+          _sliderWater = _normalizeWaterVolume(_sliderWater);
+        }
         // Anggap perangkat terhubung jika ada data status masuk
         _isDeviceConnected = true;
+      });
+    });
+  }
+
+  void _listenSettings() {
+    _settingsRef.onValue.listen((event) {
+      final data = event.snapshot.value as Map?;
+      if (data == null || !mounted) return;
+
+      setState(() {
+        _feedLimit = _toPositiveLimit(data['feed_limit'], _feedLimit);
+        _waterLimit = _toPositiveLimit(data['water_limit'], _waterLimit);
+        _feedWeight = _feedWeight.clamp(0, _feedLimit).toDouble();
+        _waterWeight = _waterWeight.clamp(0, _waterLimit).toDouble();
+        if (!_isLoadingPakan) {
+          _sliderPortion = _normalizePortion(_sliderPortion);
+        }
+        if (!_isLoadingAir) {
+          _sliderWater = _normalizeWaterVolume(_sliderWater);
+        }
       });
     });
   }
@@ -143,12 +180,118 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   }
 
   // ── Helper: progress ─────────────────────────────────────
-  double get _feedProgress => (_feedWeight / _maxFeedKg).clamp(0.0, 1.0);
-  double get _waterProgress => (_waterWeight / _maxWaterLiter).clamp(0.0, 1.0);
+  double get _feedProgress => (_feedWeight / _feedLimit).clamp(0.0, 1.0);
+  double get _waterProgress => (_waterWeight / _waterLimit).clamp(0.0, 1.0);
+  int get _emptyFeedGram =>
+      (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
+  int get _emptyWaterMl =>
+      (_waterLimit - _waterWeight).clamp(0, _waterLimit).floor();
+  int get _maxAddFeed => _normalizeMaxAdd(_emptyFeedGram);
+  int get _maxAddWater => _normalizeMaxAdd(_emptyWaterMl);
+
+  double _toStockUnit(Object? raw, double limit) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    if (limit <= 0) return value;
+    return value.clamp(0, limit).toDouble();
+  }
+
+  double _toPositiveLimit(Object? raw, double fallback) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    return value > 0 ? value : fallback;
+  }
+
+  int _normalizeMaxAdd(int value) {
+    if (value < _minPortion) return 0;
+    return value;
+  }
+
+  int _normalizeStepValue(int value, int min, int max) {
+    if (max <= min) return min;
+    if (value >= max) return max;
+    final clamped = value.clamp(min, max);
+    final stepped = ((clamped / _stepAmount).round() * _stepAmount).toInt();
+    return stepped.clamp(min, max).toInt();
+  }
+
+  int _incrementStepValue(int value, int max) {
+    if (value >= max) return max;
+    final next = value + _stepAmount;
+    return next >= max ? max : next;
+  }
+
+  int _decrementStepValue(int value, int min) {
+    if (value <= min) return min;
+    final next = value - _stepAmount;
+    return next < min ? min : next;
+  }
+
+  int _normalizePortion(int value) {
+    final max = _maxAddFeed >= _minPortion ? _maxAddFeed : _minPortion;
+    return _normalizeStepValue(value, _minPortion, max);
+  }
+
+  int _normalizeWaterVolume(int value) {
+    final max = _maxAddWater >= _minWaterVolume
+        ? _maxAddWater
+        : _minWaterVolume;
+    return _normalizeStepValue(value, _minWaterVolume, max);
+  }
+
+  Future<void> _setFeedPortion(int value) async {
+    final nextValue = _normalizePortion(value);
+    if (mounted) {
+      setState(() => _sliderPortion = nextValue);
+    }
+    await _controlRef.update({'portion': nextValue});
+  }
+
+  Future<void> _setWaterVolume(int value) async {
+    final nextValue = _normalizeWaterVolume(value);
+    if (mounted) {
+      setState(() => _sliderWater = nextValue);
+    }
+    await _controlRef.update({'water_volume': nextValue});
+  }
+
+  DateTime get _nowWita => DateTime.now().toUtc().add(const Duration(hours: 8));
+
+  Future<void> _recordManualEvent({
+    required String type,
+    required int amount,
+    required String unit,
+  }) async {
+    final now = _nowWita;
+    final key = 'manual_${type}_${DateFormat('yyyyMMdd_HHmmss').format(now)}';
+    final label = type == 'pakan' ? 'Pakan' : 'Air';
+    final desc = '$label $amount$unit berhasil dikirim secara manual.';
+
+    await _logsRef.child(key).set({
+      'timestamp': ServerValue.timestamp,
+      'type': '${type}_manual',
+      'status': 'sukses',
+      'title': 'Pemberian $label Manual',
+      'desc': desc,
+      'value': amount,
+      'unit': unit,
+    });
+    await _notificationsRef.child(key).set({
+      'timestamp': ServerValue.timestamp,
+      'type': '${type}_manual',
+      'target': 'riwayat',
+      'title': 'Pemberian $label Manual',
+      'desc': desc,
+      'read': false,
+    });
+  }
 
   // ── Aksi: Beri Pakan ──────────────────────────────────────
   Future<void> _onBeriPakan() async {
     if (!_isDeviceConnected || _isLoadingPakan) return;
+    if (_maxAddFeed < _minPortion || _sliderPortion > _maxAddFeed) return;
 
     await _pakanBtnController.forward();
     await _pakanBtnController.reverse();
@@ -157,6 +300,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
 
     // Tulis ke Firebase: set portion & nyalakan manual_feed
     await _controlRef.update({'portion': _sliderPortion, 'manual_feed': true});
+    await _recordManualEvent(type: 'pakan', amount: _sliderPortion, unit: 'g');
 
     // Tampilkan snackbar konfirmasi
     if (mounted) {
@@ -189,6 +333,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   // ── Aksi: Beri Air ────────────────────────────────────────
   Future<void> _onBeriAir() async {
     if (!_isDeviceConnected || _isLoadingAir) return;
+    if (_maxAddWater < _minWaterVolume || _sliderWater > _maxAddWater) return;
 
     await _airBtnController.forward();
     await _airBtnController.reverse();
@@ -200,6 +345,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
       'water_volume': _sliderWater,
       'manual_water': true,
     });
+    await _recordManualEvent(type: 'air', amount: _sliderWater, unit: 'ml');
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -246,8 +392,6 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                     child: ResponsiveContent(
                       child: Column(
                         children: [
-                          _buildDeviceStatus(),
-                          const SizedBox(height: 20),
                           _buildBeriPakanCard(),
                           const SizedBox(height: 20),
                           _buildBeriAirCard(),
@@ -294,79 +438,6 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     );
   }
 
-  // ── Device Status ────────────────────────────────────────
-  Widget _buildDeviceStatus() {
-    final statusColor = _isDeviceConnected
-        ? const Color(0xFF10B981)
-        : const Color(0xFFEF4444);
-    final statusText = _isDeviceConnected
-        ? 'Perangkat Terhubung'
-        : 'Perangkat Tidak Terhubung';
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: kSurfaceContainerLowest,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 24,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: statusColor,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: statusColor.withOpacity(0.5),
-                  blurRadius: 8,
-                  spreadRadius: 1,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              statusText,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: kOnSurface,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          // Live indicator ketika ada aksi berjalan
-          if (_manualFeed || _manualWater)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: kPrimary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                _manualFeed ? 'Memberi Pakan...' : 'Memberi Air...',
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: kPrimary,
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
   // ── Reload Sched Banner ───────────────────────────────────
   Widget _buildReloadSchedBanner() {
     return Container(
@@ -396,6 +467,81 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   }
 
   // ── Beri Pakan Card ──────────────────────────────────────
+  Widget _buildSeekBarWithButtons({
+    required int value,
+    required int min,
+    required int max,
+    required Color color,
+    required bool enabled,
+    required ValueChanged<int> onChanged,
+    required ValueChanged<int> onChangeEnd,
+  }) {
+    final safeMax = max <= min ? min + _stepAmount : max;
+    final safeValue = value.clamp(min, safeMax).toDouble();
+    final canDecrease = enabled && value > min;
+    final canIncrease = enabled && value < max;
+
+    return Row(
+      children: [
+        _seekIconButton(
+          icon: Icons.remove_rounded,
+          color: color,
+          enabled: canDecrease,
+          onTap: () => onChangeEnd(_decrementStepValue(value, min)),
+        ),
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              activeTrackColor: color,
+              inactiveTrackColor: kSurfaceContainerHighest,
+              thumbColor: color,
+              overlayColor: color.withOpacity(0.1),
+              trackHeight: 4,
+            ),
+            child: Slider(
+              value: safeValue,
+              min: min.toDouble(),
+              max: safeMax.toDouble(),
+              divisions: ((safeMax - min) / _stepAmount).ceil().clamp(1, 100),
+              onChanged: enabled ? (val) => onChanged(val.round()) : null,
+              onChangeEnd: enabled ? (val) => onChangeEnd(val.round()) : null,
+            ),
+          ),
+        ),
+        _seekIconButton(
+          icon: Icons.add_rounded,
+          color: color,
+          enabled: canIncrease,
+          onTap: () => onChangeEnd(_incrementStepValue(value, max)),
+        ),
+      ],
+    );
+  }
+
+  Widget _seekIconButton({
+    required IconData icon,
+    required Color color,
+    required bool enabled,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: enabled ? color.withOpacity(0.08) : kSurfaceContainerHigh,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: Icon(
+            icon,
+            color: enabled ? color : kOnSurfaceVariant.withOpacity(0.35),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBeriPakanCard() {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -460,7 +606,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                 ),
               ),
               Text(
-                '${(_feedProgress * 100).round()}%  •  ${_feedWeight.toStringAsFixed(1)} kg',
+                '${(_feedProgress * 100).round()}%  •  ${_feedWeight.round()} gram',
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
@@ -514,23 +660,17 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
               ),
             ],
           ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: kPrimary,
-              inactiveTrackColor: kSurfaceContainerHighest,
-              thumbColor: kPrimary,
-              overlayColor: kPrimary.withOpacity(0.1),
-              trackHeight: 4,
-            ),
-            child: Slider(
-              value: _sliderPortion.toDouble(),
-              min: 50,
-              max: 500,
-              divisions: 9,
-              onChanged: _isLoadingPakan
-                  ? null
-                  : (val) => setState(() => _sliderPortion = val.toInt()),
-            ),
+          const SizedBox(height: 8),
+          _buildSeekBarWithButtons(
+            value: _sliderPortion,
+            min: _minPortion,
+            max: _maxAddFeed >= _minPortion ? _maxAddFeed : _minPortion,
+            color: kPrimary,
+            enabled: !_isLoadingPakan && _maxAddFeed >= _minPortion,
+            onChanged: (val) {
+              setState(() => _sliderPortion = _normalizePortion(val));
+            },
+            onChangeEnd: _setFeedPortion,
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -545,7 +685,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                   ),
                 ),
                 Text(
-                  '500g',
+                  '${_maxAddFeed > 0 ? _maxAddFeed : 0}g',
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     color: kOnSurfaceVariant,
@@ -561,7 +701,10 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           ScaleTransition(
             scale: _pakanBtnScale,
             child: GestureDetector(
-              onTap: _isLoadingPakan || !_isDeviceConnected
+              onTap:
+                  _isLoadingPakan ||
+                      !_isDeviceConnected ||
+                      _maxAddFeed < _minPortion
                   ? null
                   : _onBeriPakan,
               child: AnimatedContainer(
@@ -695,7 +838,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                 ),
               ),
               Text(
-                '${(_waterProgress * 100).round()}%  •  ${_waterWeight.toStringAsFixed(1)} L',
+                '${(_waterProgress * 100).round()}%  •  ${_waterWeight.round()} ml',
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
@@ -749,23 +892,19 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
               ),
             ],
           ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: blueColor,
-              inactiveTrackColor: kSurfaceContainerHighest,
-              thumbColor: blueColor,
-              overlayColor: blueColor.withOpacity(0.1),
-              trackHeight: 4,
-            ),
-            child: Slider(
-              value: _sliderWater.toDouble(),
-              min: 50,
-              max: 1000,
-              divisions: 19,
-              onChanged: _isLoadingAir
-                  ? null
-                  : (val) => setState(() => _sliderWater = val.toInt()),
-            ),
+          const SizedBox(height: 8),
+          _buildSeekBarWithButtons(
+            value: _sliderWater,
+            min: _minWaterVolume,
+            max: _maxAddWater >= _minWaterVolume
+                ? _maxAddWater
+                : _minWaterVolume,
+            color: blueColor,
+            enabled: !_isLoadingAir && _maxAddWater >= _minWaterVolume,
+            onChanged: (val) {
+              setState(() => _sliderWater = _normalizeWaterVolume(val));
+            },
+            onChangeEnd: _setWaterVolume,
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -780,7 +919,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                   ),
                 ),
                 Text(
-                  '1000ml',
+                  '${_maxAddWater > 0 ? _maxAddWater : 0}ml',
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     color: kOnSurfaceVariant,
@@ -796,7 +935,12 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           ScaleTransition(
             scale: _airBtnScale,
             child: GestureDetector(
-              onTap: _isLoadingAir || !_isDeviceConnected ? null : _onBeriAir,
+              onTap:
+                  _isLoadingAir ||
+                      !_isDeviceConnected ||
+                      _maxAddWater < _minWaterVolume
+                  ? null
+                  : _onBeriAir,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 height: 56,

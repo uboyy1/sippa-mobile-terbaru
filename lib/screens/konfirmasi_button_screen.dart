@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import '../widgets/responsive_content.dart';
 
 class KonfirmasiButtonScreen extends StatefulWidget {
@@ -11,6 +12,62 @@ class KonfirmasiButtonScreen extends StatefulWidget {
 class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
   int _selectedWeight = 200;
   final List<int> _presets = [100, 200, 300, 500];
+  late final DatabaseReference _statusRef;
+  late final DatabaseReference _settingsRef;
+  double _feedWeight = 0;
+  double _feedLimit = 500;
+
+  @override
+  void initState() {
+    super.initState();
+    _statusRef = FirebaseDatabase.instance.ref('status');
+    _settingsRef = FirebaseDatabase.instance.ref('settings');
+    _listenStatus();
+    _listenSettings();
+  }
+
+  void _listenStatus() {
+    _statusRef.onValue.listen((event) {
+      if (!mounted) return;
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+      setState(() {
+        _feedWeight = _toStockUnit(data['feed_weight'], _feedLimit);
+      });
+    });
+  }
+
+  void _listenSettings() {
+    _settingsRef.onValue.listen((event) {
+      if (!mounted) return;
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+      setState(() {
+        _feedLimit = _toPositiveLimit(data['feed_limit'], _feedLimit);
+        _feedWeight = _feedWeight.clamp(0, _feedLimit).toDouble();
+      });
+    });
+  }
+
+  double _toStockUnit(Object? raw, double limit) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    if (limit <= 0) return value;
+    return value.clamp(0, limit).toDouble();
+  }
+
+  double _toPositiveLimit(Object? raw, double fallback) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    return value > 0 ? value : fallback;
+  }
+
+  int get _feedPercent {
+    if (_feedLimit <= 0) return 0;
+    return (_feedWeight / _feedLimit * 100).clamp(0, 100).round();
+  }
 
   void _updateWeight(int change) {
     setState(() {
@@ -296,8 +353,8 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
                             ),
                             const SizedBox(height: 4),
                             Row(
-                              children: const [
-                                Text(
+                              children: [
+                                const Text(
                                   'Stok Pakan ',
                                   style: TextStyle(
                                     fontFamily: 'Inter',
@@ -306,8 +363,8 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
                                   ),
                                 ),
                                 Text(
-                                  '65%',
-                                  style: TextStyle(
+                                  '$_feedPercent%',
+                                  style: const TextStyle(
                                     fontFamily: 'Inter',
                                     fontSize: 13,
                                     fontWeight: FontWeight.bold,
@@ -332,7 +389,7 @@ class _KonfirmasiButtonScreenState extends State<KonfirmasiButtonScreen> {
                       ),
                       child: FractionallySizedBox(
                         alignment: Alignment.centerLeft,
-                        widthFactor: 0.65, // 65%
+                        widthFactor: (_feedPercent / 100).clamp(0.0, 1.0),
                         child: Container(
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(

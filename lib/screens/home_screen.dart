@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:intl/intl.dart';
 import 'notifikasi_screen.dart';
 import '../widgets/responsive_content.dart';
 
@@ -21,7 +24,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   static const Color primary = Color(0xFFD62818);
-  static const Color primaryContainer = Color(0xFFE13A2A);
   static const Color warning = Color(0xFFF59E0B);
   static const Color danger = Color(0xFFDC2626);
   static const Color success = Color(0xFF16A34A);
@@ -33,25 +35,60 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Firebase state ──────────────────────────────────────
   late final DatabaseReference _statusRef;
+  late final DatabaseReference _schedulesRef;
+  late final DatabaseReference _scheduleRunsRef;
+  late final DatabaseReference _controlRef;
+  late final DatabaseReference _notificationsRef;
+  late final DatabaseReference _logsRef;
+  late final DatabaseReference _settingsRef;
+  late final DatabaseReference _notificationStateRef;
+  late final DatabaseReference _sensorHistoryRef;
   double _temperature = 0;
   double _humidity = 0;
   double _feedWeight = 0;
   double _waterWeight = 0;
-  bool _feeding = false;
-  bool _watering = false;
-  String _lastUpdated = '-';
+  double _feedLimit = 500;
+  double _waterLimit = 500;
+  bool _stockAlertEnabled = true;
   bool _isLoading = true;
+  int _unreadNotifications = 0;
+  List<Map<String, dynamic>> _todaySchedules = [];
+  Map<String, Map<String, dynamic>> _todayRunStatus = {};
+  Timer? _dayRefreshTimer;
+  StreamSubscription<DatabaseEvent>? _sensorHistorySubscription;
+  bool _isRecordingStockAlerts = false;
+  bool _pendingStockAlertCheck = false;
 
-  // Untuk grafik: simpan history suhu & kelembaban (max 13 titik)
+  // Untuk grafik: simpan history suhu & kelembaban per jam dari Firebase.
   final List<FlSpot> _suhuSpots = [];
   final List<FlSpot> _kelembabanSpots = [];
-  int _spotIndex = 0;
+  String _sensorHistoryDateKey = '';
 
   @override
   void initState() {
     super.initState();
     _statusRef = FirebaseDatabase.instance.ref('status');
+    _schedulesRef = FirebaseDatabase.instance.ref('schedules');
+    _scheduleRunsRef = FirebaseDatabase.instance.ref('schedule_runs');
+    _controlRef = FirebaseDatabase.instance.ref('control');
+    _notificationsRef = FirebaseDatabase.instance.ref('notifications');
+    _logsRef = FirebaseDatabase.instance.ref('logs');
+    _settingsRef = FirebaseDatabase.instance.ref('settings');
+    _notificationStateRef = FirebaseDatabase.instance.ref(
+      'notification_state/stock_alerts',
+    );
+    _sensorHistoryRef = FirebaseDatabase.instance.ref('sensor_history');
     _listenFirebase();
+    _listenSettings();
+    _listenSchedules();
+    _listenTodayRuns();
+    _listenNotifications();
+    _listenSensorHistoryForToday();
+    _dayRefreshTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      _listenSensorHistoryForToday();
+      _listenSchedulesOnce();
+      _refreshTodayRunsOnce();
+    });
   }
 
   void _listenFirebase() {
@@ -59,44 +96,718 @@ class _HomeScreenState extends State<HomeScreen> {
       final data = event.snapshot.value as Map?;
       if (data == null) return;
 
-      final newTemp = (data['temperature'] as num?)?.toDouble() ?? 0;
-      final newHum = (data['humidity'] as num?)?.toDouble() ?? 0;
+      final newTemp =
+          _toDoubleValue(data['temperature'] ?? data['suhu'] ?? data['temp']) ??
+          0;
+      final newHum =
+          _toDoubleValue(
+            data['humidity'] ?? data['kelembaban'] ?? data['hum'],
+          ) ??
+          0;
 
       setState(() {
         _temperature = newTemp;
         _humidity = newHum;
-        _feedWeight = (data['feed_weight'] as num?)?.toDouble() ?? 0;
-        _waterWeight = (data['water_weight'] as num?)?.toDouble() ?? 0;
-        _feeding = data['feeding'] == true;
-        _watering = data['watering'] == true;
-        _lastUpdated = data['last_updated']?.toString() ?? '-';
+        _feedWeight = _toStockUnit(data['feed_weight'], _feedLimit);
+        _waterWeight = _toStockUnit(data['water_weight'], _waterLimit);
         _isLoading = false;
+      });
 
-        // Tambah titik grafik (rolling 13 titik = 24 jam simulasi)
-        if (_spotIndex < 25) {
-          _suhuSpots.add(FlSpot(_spotIndex.toDouble(), newTemp));
-          _kelembabanSpots.add(FlSpot(_spotIndex.toDouble(), newHum));
-        } else {
-          // Geser semua titik ke kiri
-          for (int i = 0; i < _suhuSpots.length; i++) {
-            _suhuSpots[i] = FlSpot(_suhuSpots[i].x - 1, _suhuSpots[i].y);
-            _kelembabanSpots[i] = FlSpot(
-              _kelembabanSpots[i].x - 1,
-              _kelembabanSpots[i].y,
-            );
+      unawaited(_recordSensorSnapshot(data, newTemp, newHum));
+      _recordSensorEvents(newTemp, newHum);
+      _queueStockAlertCheck();
+    });
+  }
+
+  void _listenSettings() {
+    _settingsRef.onValue.listen((event) {
+      if (!mounted) return;
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+      final notifications = data['notifications'] as Map?;
+
+      setState(() {
+        _stockAlertEnabled = notifications?['stock_alert'] != false;
+        _feedLimit = _toPositiveLimit(data['feed_limit'], _feedLimit);
+        _waterLimit = _toPositiveLimit(data['water_limit'], _waterLimit);
+        _feedWeight = _feedWeight.clamp(0, _feedLimit).toDouble();
+        _waterWeight = _waterWeight.clamp(0, _waterLimit).toDouble();
+      });
+      _syncTodayRuns(_todaySchedules);
+      _queueStockAlertCheck();
+    });
+  }
+
+  DateTime get _nowWita => DateTime.now().toUtc().add(const Duration(hours: 8));
+  String get _todayDateKey => DateFormat('yyyy-MM-dd').format(_nowWita);
+  int get _todayIndex => _nowWita.weekday - 1;
+  DateTime get _todayStart =>
+      DateTime(_nowWita.year, _nowWita.month, _nowWita.day);
+  DateTime get _todayEnd => _todayStart.add(const Duration(days: 1));
+
+  double _toStockUnit(Object? raw, double limit) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    if (limit <= 0) return value;
+    return value.clamp(0, limit).toDouble();
+  }
+
+  double _toPositiveLimit(Object? raw, double fallback) {
+    final value = raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? 0;
+    return value > 0 ? value : fallback;
+  }
+
+  DateTime _sensorTimestamp(Map data) {
+    final timestamp =
+        data['timestamp'] ??
+        data['updated_at'] ??
+        data['last_update'] ??
+        data['last_updated'];
+    final parsed = _parseFirebaseTimestamp(timestamp);
+    if (parsed == null) return _nowWita;
+    return DateFormat('yyyy-MM-dd').format(parsed) == _todayDateKey
+        ? parsed
+        : _nowWita;
+  }
+
+  Future<void> _recordSensorSnapshot(
+    Map data,
+    double temperature,
+    double humidity,
+  ) async {
+    final dt = _sensorTimestamp(data);
+    final dateKey = DateFormat('yyyy-MM-dd').format(dt);
+    final hourKey = DateFormat('HH').format(dt);
+    await _sensorHistoryRef.child(dateKey).child(hourKey).update({
+      'temperature': temperature,
+      'humidity': humidity,
+      'hour': dt.hour,
+      'minute': dt.minute,
+      'timestamp': ServerValue.timestamp,
+      'wita_time': DateFormat('yyyy-MM-dd HH:mm:ss').format(dt),
+    });
+  }
+
+  void _listenSensorHistoryForToday() {
+    final dateKey = _todayDateKey;
+    if (_sensorHistoryDateKey == dateKey) return;
+    _sensorHistoryDateKey = dateKey;
+    _sensorHistorySubscription?.cancel();
+    _sensorHistorySubscription = _sensorHistoryRef
+        .child(dateKey)
+        .onValue
+        .listen((event) {
+          if (!mounted) return;
+          final raw = event.snapshot.value;
+          if (raw == null) {
+            setState(() {
+              _suhuSpots.clear();
+              _kelembabanSpots.clear();
+            });
+            return;
           }
-          _suhuSpots.removeWhere((s) => s.x < 0);
-          _kelembabanSpots.removeWhere((s) => s.x < 0);
-          _suhuSpots.add(FlSpot(24, newTemp));
-          _kelembabanSpots.add(FlSpot(24, newHum));
+
+          final rawMap = Map<String, dynamic>.from(raw as Map);
+          final suhu = <FlSpot>[];
+          final kelembaban = <FlSpot>[];
+          rawMap.forEach((key, value) {
+            if (value is! Map) return;
+            final item = Map<String, dynamic>.from(value);
+            final hour = _historyHour(key.toString(), item);
+            final temperature = _toDoubleValue(
+              item['temperature'] ?? item['suhu'] ?? item['temp'],
+            );
+            final humidity = _toDoubleValue(
+              item['humidity'] ?? item['kelembaban'] ?? item['hum'],
+            );
+            if (temperature != null) suhu.add(FlSpot(hour, temperature));
+            if (humidity != null) kelembaban.add(FlSpot(hour, humidity));
+          });
+
+          suhu.sort((a, b) => a.x.compareTo(b.x));
+          kelembaban.sort((a, b) => a.x.compareTo(b.x));
+          setState(() {
+            _suhuSpots
+              ..clear()
+              ..addAll(suhu);
+            _kelembabanSpots
+              ..clear()
+              ..addAll(kelembaban);
+          });
+        });
+  }
+
+  double _historyHour(String key, Map<String, dynamic> item) {
+    final hourValue = _toDoubleValue(item['hour']);
+    final minuteValue = _toDoubleValue(item['minute']) ?? 0;
+    if (hourValue != null) {
+      return (hourValue + (minuteValue / 60)).clamp(0, 24).toDouble();
+    }
+    final keyHour = double.tryParse(key);
+    if (keyHour != null) return keyHour.clamp(0, 24).toDouble();
+    final dt = _parseFirebaseTimestamp(item['wita_time'] ?? item['timestamp']);
+    if (dt == null) return 0;
+    return (dt.hour + (dt.minute / 60) + (dt.second / 3600))
+        .clamp(0, 24)
+        .toDouble();
+  }
+
+  double? _toDoubleValue(Object? raw) {
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw?.toString() ?? '');
+  }
+
+  bool _isScheduleDue(String time) {
+    final parts = time.split(':');
+    final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 0;
+    final minute = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
+    final scheduled = DateTime(
+      _nowWita.year,
+      _nowWita.month,
+      _nowWita.day,
+      hour,
+      minute,
+    );
+    return !_nowWita.isBefore(scheduled);
+  }
+
+  DateTime? _parseStartAt(Object? raw) {
+    if (raw is num) {
+      return DateTime.fromMillisecondsSinceEpoch(raw.toInt());
+    }
+    return DateTime.tryParse(raw?.toString() ?? '');
+  }
+
+  bool _startsAfterToday(Map<String, dynamic> schedule) {
+    final startAt = _parseStartAt(schedule['start_at']);
+    return startAt != null && !startAt.isBefore(_todayEnd);
+  }
+
+  bool _shouldCancelSchedule(Map<String, dynamic> schedule) {
+    final pakan = schedule['pakan'] == true;
+    final air = schedule['air'] == true;
+    return (pakan && _feedPercent() > 50) || (air && _waterPercent() > 50);
+  }
+
+  String _cancelReason(Map<String, dynamic> schedule) {
+    final reasons = <String>[];
+    if (schedule['pakan'] == true && _feedPercent() > 50) {
+      reasons.add('pakan ${_feedPercent()}%');
+    }
+    if (schedule['air'] == true && _waterPercent() > 50) {
+      reasons.add('air ${_waterPercent()}%');
+    }
+    return reasons.join(' dan ');
+  }
+
+  Future<void> _listenSchedulesOnce() async {
+    final snapshot = await _schedulesRef.get();
+    if (!mounted) return;
+    _parseSchedules(snapshot.value);
+  }
+
+  void _listenSchedules() {
+    _schedulesRef.onValue.listen((event) {
+      if (!mounted) return;
+      _parseSchedules(event.snapshot.value);
+    });
+  }
+
+  void _parseSchedules(Object? raw) {
+    if (raw == null) {
+      setState(() => _todaySchedules = []);
+      return;
+    }
+
+    final rawMap = Map<String, dynamic>.from(raw as Map);
+    final schedules = <Map<String, dynamic>>[];
+
+    rawMap.forEach((key, value) {
+      final jadwal = Map<String, dynamic>.from(value as Map);
+      final activeDays = List<bool>.filled(7, false);
+      final daysRaw = jadwal['days'];
+
+      if (daysRaw is Map) {
+        daysRaw.forEach((dayKey, dayValue) {
+          final idx = int.tryParse(dayKey.toString());
+          if (idx != null && idx >= 0 && idx < activeDays.length) {
+            activeDays[idx] = dayValue == true;
+          }
+        });
+      } else if (daysRaw is List) {
+        for (int i = 0; i < daysRaw.length && i < activeDays.length; i++) {
+          activeDays[i] = daysRaw[i] == true;
         }
-        _spotIndex++;
+      }
+
+      if (jadwal['active'] != true || !activeDays[_todayIndex]) return;
+      if (_startsAfterToday({'start_at': jadwal['start_at']})) return;
+
+      final type = jadwal['type']?.toString() ?? 'pakan_air';
+      final repeatRaw = jadwal['repeat'];
+      final repeatsWeekly =
+          repeatRaw == true ||
+          repeatRaw == 'Setiap Minggu' ||
+          repeatRaw == 'Setiap Hari';
+      final waterRaw = jadwal['water'];
+      final water = waterRaw is num
+          ? waterRaw.toInt()
+          : int.tryParse(waterRaw?.toString() ?? '') ?? 0;
+
+      schedules.add({
+        'id': key,
+        'time': jadwal['time']?.toString() ?? '00:00',
+        'repeat': repeatsWeekly ? 'Setiap Minggu' : 'Khusus',
+        'pakan': type == 'pakan' || type == 'pakan_air',
+        'air': type == 'air' || type == 'pakan_air',
+        'portion': (jadwal['portion'] as num?)?.toInt() ?? 0,
+        'water': water,
+        'start_at': jadwal['start_at'],
       });
     });
+
+    schedules.sort((a, b) => a['time'].compareTo(b['time']));
+    _syncTodayRuns(schedules);
+    setState(() => _todaySchedules = schedules);
+  }
+
+  void _listenTodayRuns() {
+    _scheduleRunsRef.child(_todayDateKey).onValue.listen((event) {
+      if (!mounted) return;
+      final raw = event.snapshot.value;
+      if (raw == null) {
+        setState(() => _todayRunStatus = {});
+        return;
+      }
+
+      final rawMap = Map<String, dynamic>.from(raw as Map);
+      final parsed = <String, Map<String, dynamic>>{};
+      rawMap.forEach((key, value) {
+        parsed[key] = Map<String, dynamic>.from(value as Map);
+      });
+      setState(() => _todayRunStatus = parsed);
+      _recordCompletedSchedules(parsed);
+    });
+  }
+
+  Future<void> _refreshTodayRunsOnce() async {
+    final snapshot = await _scheduleRunsRef.child(_todayDateKey).get();
+    if (!mounted) return;
+    final raw = snapshot.value;
+    if (raw == null) {
+      setState(() => _todayRunStatus = {});
+      return;
+    }
+    final rawMap = Map<String, dynamic>.from(raw as Map);
+    final parsed = <String, Map<String, dynamic>>{};
+    rawMap.forEach((key, value) {
+      parsed[key] = Map<String, dynamic>.from(value as Map);
+    });
+    setState(() => _todayRunStatus = parsed);
+    _recordCompletedSchedules(parsed);
+  }
+
+  Future<void> _syncTodayRuns(List<Map<String, dynamic>> schedules) async {
+    final today = _todayDateKey;
+    final runsSnapshot = await _scheduleRunsRef.get();
+    final runsRaw = runsSnapshot.value;
+    if (runsRaw is Map) {
+      for (final key in runsRaw.keys) {
+        if (key.toString() != today) {
+          await _scheduleRunsRef.child(key.toString()).remove();
+        }
+      }
+    }
+
+    final todayRef = _scheduleRunsRef.child(today);
+    for (final schedule in schedules) {
+      final id = schedule['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      final existingSnapshot = await todayRef.child(id).get();
+      final existing = existingSnapshot.value is Map
+          ? Map<String, dynamic>.from(existingSnapshot.value as Map)
+          : <String, dynamic>{};
+      final time = schedule['time']?.toString() ?? '00:00';
+      final due = _isScheduleDue(time);
+      final isCancelled =
+          existing['cancelled'] == true || existing['status'] == 'dibatalkan';
+      final isDone =
+          !isCancelled &&
+          (existing['done'] == true ||
+              existing['status'] == 'selesai' ||
+              (due && !_shouldCancelSchedule(schedule)));
+      final shouldCancel = !isDone && due && _shouldCancelSchedule(schedule);
+      final shouldDispatch = isDone && due && existing['dispatched_at'] == null;
+      await todayRef.child(id).update({
+        'time': time,
+        'pakan': schedule['pakan'],
+        'air': schedule['air'],
+        'portion': schedule['portion'],
+        'water': schedule['water'],
+        'status': shouldCancel
+            ? 'dibatalkan'
+            : (isDone ? 'selesai' : 'menunggu'),
+        'done': isDone,
+        'cancelled': shouldCancel || isCancelled,
+        if (shouldCancel) 'cancel_reason': _cancelReason(schedule),
+        if (isDone && existing['completed_at'] == null)
+          'completed_at': ServerValue.timestamp,
+        if (shouldDispatch) 'dispatched_at': ServerValue.timestamp,
+        if (shouldCancel && existing['cancelled_at'] == null)
+          'cancelled_at': ServerValue.timestamp,
+        'date': today,
+      });
+      if (shouldCancel) {
+        await _recordCancelledSchedule(id, schedule, time);
+      } else if (shouldDispatch) {
+        await _dispatchAutomaticSchedule(schedule);
+      }
+      if ((shouldCancel || isDone) && schedule['repeat'] != 'Setiap Minggu') {
+        await _schedulesRef.child(id).update({'active': false});
+      }
+    }
+  }
+
+  Future<void> _dispatchAutomaticSchedule(Map<String, dynamic> schedule) async {
+    final updates = <String, Object?>{};
+    if (schedule['pakan'] == true) {
+      final emptyFeed = (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
+      updates['portion'] = ((schedule['portion'] as num?)?.toInt() ?? 0)
+          .clamp(0, emptyFeed)
+          .toInt();
+      updates['manual_feed'] = true;
+    }
+    if (schedule['air'] == true) {
+      final emptyWater = (_waterLimit - _waterWeight)
+          .clamp(0, _waterLimit)
+          .floor();
+      updates['water_volume'] = ((schedule['water'] as num?)?.toInt() ?? 0)
+          .clamp(0, emptyWater)
+          .toInt();
+      updates['manual_water'] = true;
+    }
+    if (updates.isNotEmpty) {
+      await _controlRef.update(updates);
+    }
+  }
+
+  void _listenNotifications() {
+    _notificationsRef.onValue.listen((event) {
+      if (!mounted) return;
+      final raw = event.snapshot.value;
+      if (raw == null) {
+        setState(() => _unreadNotifications = 0);
+        return;
+      }
+
+      final rawMap = Map<String, dynamic>.from(raw as Map);
+      var unreadCount = 0;
+      for (final entry in rawMap.entries) {
+        final value = entry.value;
+        if (value is! Map) continue;
+        final notif = Map<String, dynamic>.from(value);
+        final dt = _parseFirebaseTimestamp(notif['timestamp']);
+        if (dt != null && _nowWita.difference(dt).inHours >= 24) {
+          _notificationsRef.child(entry.key.toString()).remove();
+          continue;
+        }
+        if (notif['read'] != true && notif['isRead'] != true) {
+          unreadCount++;
+        }
+      }
+
+      setState(() => _unreadNotifications = unreadCount);
+    });
+  }
+
+  DateTime? _parseFirebaseTimestamp(Object? raw) {
+    if (raw is num) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        raw.toInt(),
+        isUtc: true,
+      ).add(const Duration(hours: 8));
+    }
+    final text = raw?.toString() ?? '';
+    if (text.isEmpty) return null;
+    final parsed = DateTime.tryParse(text.replaceAll(' ', 'T'));
+    if (parsed == null) return null;
+    return parsed.isUtc ? parsed.toUtc().add(const Duration(hours: 8)) : parsed;
+  }
+
+  Future<void> _recordCancelledSchedule(
+    String id,
+    Map<String, dynamic> schedule,
+    String time,
+  ) async {
+    final pakan = schedule['pakan'] == true;
+    final air = schedule['air'] == true;
+    final label = pakan && air ? 'pakan dan air' : (pakan ? 'pakan' : 'air');
+    final desc =
+        'Jadwal pemberian $label pukul $time dibatalkan karena persediaan ${_cancelReason(schedule)} masih mencukupi (di atas 50%).';
+    final key = 'jadwal_batal_${_todayDateKey}_$id';
+
+    await _logsRef.child(key).update({
+      'timestamp': ServerValue.timestamp,
+      'type': 'jadwal_dibatalkan',
+      'status': 'dibatalkan',
+      'title': 'Jadwal $time dibatalkan',
+      'desc': desc,
+    });
+    final notificationSnapshot = await _notificationsRef.child(key).get();
+    if (!notificationSnapshot.exists) {
+      await _notificationsRef.child(key).set({
+        'timestamp': ServerValue.timestamp,
+        'type': 'jadwal_dibatalkan',
+        'target': 'jadwal',
+        'title': 'Jadwal Otomatis Dibatalkan',
+        'desc': desc,
+        'read': false,
+      });
+    }
+  }
+
+  Future<void> _recordCompletedSchedules(
+    Map<String, Map<String, dynamic>> runs,
+  ) async {
+    for (final entry in runs.entries) {
+      final run = entry.value;
+      if (run['cancelled'] == true || run['status'] == 'dibatalkan') continue;
+      final done = run['done'] == true || run['status'] == 'selesai';
+      if (!done) continue;
+      final schedule = _todaySchedules.cast<Map<String, dynamic>?>().firstWhere(
+        (item) => item?['id'] == entry.key,
+        orElse: () => null,
+      );
+      final time =
+          run['time']?.toString() ?? schedule?['time']?.toString() ?? '';
+      final pakan = run['pakan'] == true || schedule?['pakan'] == true;
+      final air = run['air'] == true || schedule?['air'] == true;
+      final portion =
+          (run['portion'] as num?)?.toInt() ??
+          (schedule?['portion'] as num?)?.toInt() ??
+          0;
+      final water =
+          (run['water'] as num?)?.toInt() ??
+          (schedule?['water'] as num?)?.toInt() ??
+          0;
+      final parts = <String>[
+        if (pakan) '${portion}g pakan',
+        if (air) '${water}ml air',
+      ];
+      final key = 'jadwal_${_todayDateKey}_${entry.key}';
+      await _logsRef.child(key).update({
+        'timestamp': run['completed_at'] ?? ServerValue.timestamp,
+        'type': pakan && air
+            ? 'pakan_air_otomatis'
+            : (pakan ? 'pakan_otomatis' : 'air_otomatis'),
+        'status': 'sukses',
+        'title': 'Jadwal $time selesai',
+        'desc': parts.isEmpty
+            ? 'Pemberian otomatis selesai.'
+            : 'Pemberian ${parts.join(' dan ')} selesai sesuai jadwal.',
+      });
+      final notificationSnapshot = await _notificationsRef.child(key).get();
+      if (!notificationSnapshot.exists) {
+        await _notificationsRef.child(key).set({
+          'timestamp': run['completed_at'] ?? ServerValue.timestamp,
+          'type': 'jadwal_selesai',
+          'target': 'riwayat',
+          'title': 'Jadwal $time Selesai',
+          'desc': parts.isEmpty
+              ? 'Pemberian otomatis selesai.'
+              : '${parts.join(' dan ')} berhasil diberikan.',
+          'read': false,
+        });
+      }
+    }
+  }
+
+  Future<void> _recordSensorEvents(double temperature, double humidity) async {
+    final hourKey = DateFormat('yyyyMMdd_HH').format(_nowWita);
+    if (temperature > 29 || temperature < 22) {
+      final key = 'sensor_suhu_$hourKey';
+      await _logsRef.child(key).update({
+        'timestamp': ServerValue.timestamp,
+        'type': 'sensor_suhu',
+        'status': 'peringatan',
+        'title': 'Peringatan Suhu',
+        'desc':
+            'Suhu kandang ${temperature.toStringAsFixed(1)}°C di luar batas ideal.',
+        'value': temperature,
+        'unit': '°C',
+      });
+      final notificationSnapshot = await _notificationsRef.child(key).get();
+      if (!notificationSnapshot.exists) {
+        await _notificationsRef.child(key).set({
+          'timestamp': ServerValue.timestamp,
+          'type': 'suhu',
+          'target': 'dashboard',
+          'title': 'Peringatan Suhu',
+          'desc':
+              'Suhu kandang ${temperature.toStringAsFixed(1)}°C di luar batas ideal.',
+          'read': false,
+        });
+      }
+    }
+    if (humidity < 50 || humidity > 70) {
+      final key = 'sensor_kelembaban_$hourKey';
+      await _logsRef.child(key).update({
+        'timestamp': ServerValue.timestamp,
+        'type': 'sensor_kelembaban',
+        'status': 'peringatan',
+        'title': 'Peringatan Kelembaban',
+        'desc':
+            'Kelembaban kandang ${humidity.toStringAsFixed(1)}% di luar batas ideal.',
+        'value': humidity,
+        'unit': '%',
+      });
+      final notificationSnapshot = await _notificationsRef.child(key).get();
+      if (!notificationSnapshot.exists) {
+        await _notificationsRef.child(key).set({
+          'timestamp': ServerValue.timestamp,
+          'type': 'kelembaban',
+          'target': 'dashboard',
+          'title': 'Peringatan Kelembaban',
+          'desc':
+              'Kelembaban kandang ${humidity.toStringAsFixed(1)}% di luar batas ideal.',
+          'read': false,
+        });
+      }
+    }
+  }
+
+  void _queueStockAlertCheck() {
+    if (!_stockAlertEnabled) return;
+    if (_isRecordingStockAlerts) {
+      _pendingStockAlertCheck = true;
+      return;
+    }
+    unawaited(_recordStockAlerts());
+  }
+
+  Future<void> _recordStockAlerts() async {
+    if (!_stockAlertEnabled || _isRecordingStockAlerts) return;
+    _isRecordingStockAlerts = true;
+    try {
+      final alerts = [
+        (
+          stateKey: 'pakan',
+          type: 'stok_pakan',
+          title: 'Peringatan Pakan Rendah',
+          subject: 'pakan',
+          refillTarget: 'pakan',
+          amount: _feedWeight,
+          limit: _feedLimit,
+          unit: 'gram',
+          percent: _feedPercent(),
+        ),
+        (
+          stateKey: 'air',
+          type: 'stok_air',
+          title: 'Peringatan Air Rendah',
+          subject: 'air',
+          refillTarget: 'air',
+          amount: _waterWeight,
+          limit: _waterLimit,
+          unit: 'ml',
+          percent: _waterPercent(),
+        ),
+      ];
+
+      for (final alert in alerts) {
+        if (alert.limit <= 0) continue;
+        final threshold = alert.limit * 0.10;
+        final isLow = alert.amount <= threshold;
+        final stateRef = _notificationStateRef.child(alert.stateKey);
+        final stateSnapshot = await stateRef.get();
+        final state = stateSnapshot.value is Map
+            ? Map<String, dynamic>.from(stateSnapshot.value as Map)
+            : <String, dynamic>{};
+        final wasLow = state['is_low'] == true;
+        final lastLimit = _toDoubleValue(state['limit']) ?? 0;
+        final sameLimit = (lastLimit - alert.limit).abs() < 0.001;
+
+        if (!isLow) {
+          if (wasLow) {
+            await stateRef.update({
+              'is_low': false,
+              'amount': alert.amount,
+              'limit': alert.limit,
+              'threshold': threshold,
+              'recovered_at': ServerValue.timestamp,
+            });
+          }
+          continue;
+        }
+
+        if (wasLow && sameLimit) continue;
+
+        final key =
+            'stok_${alert.stateKey}_${DateFormat('yyyyMMdd_HHmmss').format(_nowWita)}';
+        final amountText = _formatStockAmount(alert.amount);
+        final limitText = _formatStockAmount(alert.limit);
+        final thresholdText = _formatStockAmount(threshold);
+        final desc =
+            'Peringatan! Sisa ${alert.subject} berada di bawah 10% dari kapasitas maksimum. '
+            'Segera isi ulang ${alert.refillTarget} untuk memastikan sistem tetap berjalan dengan baik. '
+            'Sisa $amountText ${alert.unit} dari kapasitas $limitText ${alert.unit} '
+            '(ambang $thresholdText ${alert.unit}).';
+
+        await _logsRef.child(key).update({
+          'timestamp': ServerValue.timestamp,
+          'type': alert.type,
+          'status': 'peringatan',
+          'title': alert.title,
+          'desc': desc,
+          'value': alert.amount,
+          'limit': alert.limit,
+          'threshold': threshold,
+          'percent': alert.percent,
+          'unit': alert.unit,
+        });
+        await _notificationsRef.child(key).set({
+          'timestamp': ServerValue.timestamp,
+          'type': alert.type,
+          'target': 'dashboard',
+          'title': alert.title,
+          'desc': desc,
+          'read': false,
+          'value': alert.amount,
+          'limit': alert.limit,
+          'threshold': threshold,
+          'percent': alert.percent,
+          'unit': alert.unit,
+        });
+        await stateRef.update({
+          'is_low': true,
+          'amount': alert.amount,
+          'limit': alert.limit,
+          'threshold': threshold,
+          'last_alert_key': key,
+          'last_alert_at': ServerValue.timestamp,
+        });
+      }
+    } finally {
+      _isRecordingStockAlerts = false;
+      if (_pendingStockAlertCheck) {
+        _pendingStockAlertCheck = false;
+        _queueStockAlertCheck();
+      }
+    }
+  }
+
+  String _formatStockAmount(double value) {
+    if (value % 1 == 0) return value.round().toString();
+    return value.toStringAsFixed(1);
   }
 
   @override
   void dispose() {
+    _dayRefreshTimer?.cancel();
+    _sensorHistorySubscription?.cancel();
     super.dispose();
   }
 
@@ -113,9 +824,42 @@ class _HomeScreenState extends State<HomeScreen> {
     return (label: 'Terlalu Lembab', color: danger);
   }
 
-  /// Hitung persentase stok dari berat (asumsi max 5 kg pakan / 20 liter air)
-  int _feedPercent() => (_feedWeight / 5.0 * 100).clamp(0, 100).toInt();
-  int _waterPercent() => (_waterWeight / 20.0 * 100).clamp(0, 100).toInt();
+  int _stockPercent(double amount, double limit) {
+    if (limit <= 0) return 0;
+    return (amount / limit * 100).clamp(0, 100).round();
+  }
+
+  int _feedPercent() => _stockPercent(_feedWeight, _feedLimit);
+  int _waterPercent() => _stockPercent(_waterWeight, _waterLimit);
+
+  List<FlSpot> _dailyChartSpots(List<FlSpot> source, double minY, double maxY) {
+    final nowHour =
+        _nowWita.hour + (_nowWita.minute / 60) + (_nowWita.second / 3600);
+    final spots =
+        source
+            .map(
+              (spot) => FlSpot(
+                spot.x.clamp(0, 24).toDouble(),
+                spot.y.clamp(minY, maxY).toDouble(),
+              ),
+            )
+            .toList()
+          ..sort((a, b) => a.x.compareTo(b.x));
+    if (spots.isEmpty) {
+      return [FlSpot(0, minY), FlSpot(nowHour, minY)];
+    }
+
+    final result = <FlSpot>[FlSpot(0, minY)];
+    final first = spots.first;
+    if (first.x > 0) {
+      result.add(FlSpot((first.x - 0.01).clamp(0, 24).toDouble(), minY));
+    }
+    result.addAll(spots);
+    if (result.last.x < nowHour) {
+      result.add(FlSpot(nowHour, result.last.y));
+    }
+    return result;
+  }
 
   // ── Build ────────────────────────────────────────────────
   @override
@@ -125,7 +869,6 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         children: [
           _buildTopAppBar(),
-          _buildStatusStrip(),
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator(color: primary))
@@ -143,18 +886,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           _buildSectionAksiCepat(),
                           const SizedBox(height: 32),
                           _buildSectionJadwal(),
-                          const SizedBox(height: 8),
-                          // last updated
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 24),
-                            child: Text(
-                              'Terakhir diperbarui: $_lastUpdated',
-                              style: GoogleFonts.inter(
-                                fontSize: 11,
-                                color: onSurfaceVariant,
-                              ),
-                            ),
-                          ),
                           const SizedBox(height: 24),
                         ],
                       ),
@@ -196,37 +927,44 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   _iconButton(
                     Icons.notifications_outlined,
-                    onTap: () {
-                      Navigator.push(
+                    onTap: () async {
+                      final targetTab = await Navigator.push<int>(
                         context,
                         MaterialPageRoute(
                           builder: (context) => const NotifikasiScreen(),
                         ),
                       );
+                      if (targetTab != null) widget.onNavigateTab(targetTab);
                     },
                   ),
-                  Positioned(
-                    top: 4,
-                    right: 4,
-                    child: Container(
-                      width: 16,
-                      height: 16,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: Text(
-                          '2',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                            color: primary,
+                  if (_unreadNotifications > 0)
+                    Positioned(
+                      top: 4,
+                      right: 4,
+                      child: Container(
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Center(
+                          child: Text(
+                            _unreadNotifications > 99
+                                ? '99+'
+                                : '$_unreadNotifications',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              color: primary,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
             ],
@@ -245,49 +983,6 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Padding(
           padding: const EdgeInsets.all(8),
           child: Icon(icon, color: Colors.white, size: 24),
-        ),
-      ),
-    );
-  }
-
-  // ── Status Strip ─────────────────────────────────────────
-  Widget _buildStatusStrip() {
-    return Container(
-      color: primaryContainer,
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: ResponsiveContent(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF4ADE80),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF4ADE80).withOpacity(0.5),
-                      blurRadius: 8,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Perangkat Terhubung',
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white,
-                  letterSpacing: 0.3,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );
@@ -346,14 +1041,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 icon: Icons.grain_rounded,
                 label: 'Stok Pakan',
                 percentage: _feedPercent(),
-                amount: '${_feedWeight.toStringAsFixed(1)} kg',
+                amount: '${_feedWeight.round()} gram',
               ),
               const SizedBox(width: 16),
               _stockCard(
                 icon: Icons.water_drop_rounded,
                 label: 'Stok Air Minum',
                 percentage: _waterPercent(),
-                amount: '${_waterWeight.toStringAsFixed(1)} liter',
+                amount: '${_waterWeight.round()} ml',
               ),
             ],
           ),
@@ -534,20 +1229,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Section: Grafik ──────────────────────────────────────
   Widget _buildSectionGrafik() {
-    // Fallback jika belum ada data grafik
-    final suhuSpots = _suhuSpots.isNotEmpty
-        ? _suhuSpots
-        : [FlSpot(0, _temperature)];
-    final kelembabanSpots = _kelembabanSpots.isNotEmpty
-        ? _kelembabanSpots
-        : [FlSpot(0, _humidity)];
+    final suhuSpots = _dailyChartSpots(_suhuSpots, 20, 40);
+    final kelembabanSpots = _dailyChartSpots(_kelembabanSpots, 0, 100);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
         children: [
           _lineChartCard(
-            title: 'Suhu Kandang (Realtime)',
+            title: 'Suhu Kandang Hari Ini',
             spots: suhuSpots,
             minY: 20,
             maxY: 40,
@@ -557,7 +1247,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           const SizedBox(height: 20),
           _lineChartCard(
-            title: 'Kelembaban Kandang (Realtime)',
+            title: 'Kelembaban Kandang Hari Ini',
             spots: kelembabanSpots,
             minY: 0,
             maxY: 100,
@@ -613,6 +1303,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 maxX: 24,
                 minY: minY,
                 maxY: maxY,
+                clipData: const FlClipData.all(),
                 gridData: FlGridData(
                   show: true,
                   drawVerticalLine: false,
@@ -650,17 +1341,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     sideTitles: SideTitles(
                       showTitles: true,
                       reservedSize: 28,
-                      interval: 6,
+                      interval: 3,
                       getTitlesWidget: (val, _) {
-                        final labels = {
-                          0.0: '00:00',
-                          6.0: '06:00',
-                          12.0: '12:00',
-                          18.0: '18:00',
-                          24.0: '24:00',
-                        };
+                        final hour = val.round();
+                        if (hour % 3 != 0 || hour < 0 || hour > 24) {
+                          return const SizedBox.shrink();
+                        }
                         return Text(
-                          labels[val] ?? '',
+                          '${hour.toString().padLeft(2, '0')}:00',
                           style: GoogleFonts.inter(
                             fontSize: 9,
                             color: onSurfaceVariant,
@@ -683,7 +1371,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     isCurved: true,
                     color: color,
                     barWidth: 2.5,
-                    dotData: const FlDotData(show: false),
+                    dotData: const FlDotData(show: true),
                     belowBarData: BarAreaData(
                       show: true,
                       gradient: LinearGradient(
@@ -841,16 +1529,37 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            _jadwalItem(time: '06:00', label: 'Porsi Pagi', isDone: true),
-            const SizedBox(height: 16),
-            _jadwalItem(time: '12:00', label: 'Porsi Siang', isDone: true),
-            const SizedBox(height: 16),
-            _jadwalItem(
-              time: '18:00',
-              label: 'Porsi Malam',
-              // Jika feeding aktif di Firebase, tandai sedang berjalan
-              isDone: !_feeding,
-            ),
+            if (_todaySchedules.isEmpty)
+              Text(
+                'Tidak ada jadwal aktif hari ini',
+                style: GoogleFonts.inter(fontSize: 13, color: onSurfaceVariant),
+              )
+            else
+              ..._todaySchedules.asMap().entries.map((entry) {
+                final schedule = entry.value;
+                final run = _todayRunStatus[schedule['id']];
+                final hasPakan = schedule['pakan'] == true;
+                final hasAir = schedule['air'] == true;
+                final labelParts = <String>[
+                  if (hasPakan) '${schedule['portion']}g pakan',
+                  if (hasAir) '${schedule['water']}ml air',
+                ];
+
+                return Padding(
+                  padding: EdgeInsets.only(
+                    bottom: entry.key == _todaySchedules.length - 1 ? 0 : 16,
+                  ),
+                  child: _jadwalItem(
+                    time: schedule['time']?.toString() ?? '00:00',
+                    label: labelParts.join(' + '),
+                    status: run?['status']?.toString() ?? 'menunggu',
+                    isDone: run?['done'] == true || run?['status'] == 'selesai',
+                    isCancelled:
+                        run?['cancelled'] == true ||
+                        run?['status'] == 'dibatalkan',
+                  ),
+                );
+              }),
           ],
         ),
       ),
@@ -860,23 +1569,42 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _jadwalItem({
     required String time,
     required String label,
+    required String status,
     required bool isDone,
+    required bool isCancelled,
   }) {
+    final statusColor = isDone
+        ? const Color(0xFF16A34A)
+        : (isCancelled ? const Color(0xFFF97316) : onSurfaceVariant);
+    final statusLabel = isDone
+        ? 'Selesai'
+        : (isCancelled
+              ? 'Dibatalkan'
+              : (status == 'menunggu' ? 'Menunggu' : status));
+
     return Opacity(
-      opacity: isDone ? 1.0 : 0.6,
+      opacity: isDone || isCancelled ? 1.0 : 0.6,
       child: Row(
         children: [
           Container(
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: isDone ? const Color(0xFFF0FDF4) : surfaceContainerHigh,
+              color: isDone
+                  ? const Color(0xFFF0FDF4)
+                  : (isCancelled
+                        ? const Color(0xFFFFF7ED)
+                        : surfaceContainerHigh),
               shape: BoxShape.circle,
             ),
             child: Icon(
-              isDone ? Icons.check_rounded : Icons.schedule_rounded,
+              isDone
+                  ? Icons.check_rounded
+                  : (isCancelled
+                        ? Icons.block_rounded
+                        : Icons.schedule_rounded),
               size: 18,
-              color: isDone ? const Color(0xFF16A34A) : onSurfaceVariant,
+              color: statusColor,
             ),
           ),
           const SizedBox(width: 16),
@@ -903,11 +1631,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           Text(
-            isDone ? 'Selesai' : 'Mendatang',
+            statusLabel,
             style: GoogleFonts.inter(
               fontSize: 11,
               fontWeight: FontWeight.w700,
-              color: isDone ? const Color(0xFF16A34A) : onSurfaceVariant,
+              color: statusColor,
               letterSpacing: 0.8,
             ),
           ),

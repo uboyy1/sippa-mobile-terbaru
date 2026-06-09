@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_database/firebase_database.dart';
 import '../controllers/profile_controller.dart';
 import '../models/user_profile.dart';
 import 'edit_profile_screen.dart';
@@ -22,12 +23,137 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static const Color surfaceContainerHigh = Color(0xFFEAE7E7);
   static const Color onSurface = Color(0xFF1B1C1C);
   static const Color onSurfaceVariant = Color(0xFF5B403D);
-  static const Color error = Color(0xFFBA1A1A);
+
+  late final DatabaseReference _settingsRef;
+  late final TextEditingController _feedLimitController;
+  late final TextEditingController _waterLimitController;
+  late final TextEditingController _fillPercentController;
+  late final TextEditingController _refillPercentController;
 
   bool _notifPakanHabis = true;
   bool _notifSuhu = true;
   bool _notifJadwal = false;
   bool _notifOffline = true;
+  bool _isSavingCapacity = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _settingsRef = FirebaseDatabase.instance.ref('settings');
+    _feedLimitController = TextEditingController(text: '0');
+    _waterLimitController = TextEditingController(text: '0');
+    _fillPercentController = TextEditingController(text: '0');
+    _refillPercentController = TextEditingController(text: '0');
+    _listenSettings();
+  }
+
+  void _listenSettings() {
+    _settingsRef.onValue.listen((event) {
+      if (!mounted) return;
+      final data = event.snapshot.value as Map?;
+      if (data == null) return;
+      final notifications = data['notifications'] as Map?;
+      setState(() {
+        _notifPakanHabis = notifications?['stock_alert'] != false;
+        _notifSuhu = notifications?['temperature_alert'] != false;
+        _notifJadwal = notifications?['schedule_confirmation'] == true;
+        _notifOffline = notifications?['offline_alert'] != false;
+      });
+      _syncControllerText(_feedLimitController, data['feed_limit']);
+      _syncControllerText(_waterLimitController, data['water_limit']);
+      _syncControllerText(_fillPercentController, data['fill_percent']);
+      _syncControllerText(_refillPercentController, data['refill_percent']);
+    });
+  }
+
+  void _syncControllerText(TextEditingController controller, Object? value) {
+    final text = value?.toString() ?? '0';
+    if (controller.text == text) return;
+    controller.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+
+  Future<void> _updateNotificationSetting(String key, bool value) {
+    return _settingsRef.child('notifications').update({key: value});
+  }
+
+  int? _parseNumberSetting(
+    TextEditingController controller, {
+    bool isPercent = false,
+    bool allowZero = true,
+  }) {
+    final rawValue = controller.text.trim();
+    final parsedValue = int.tryParse(rawValue);
+    if (parsedValue == null) return null;
+    if (!allowZero && parsedValue <= 0) return null;
+    return isPercent ? parsedValue.clamp(0, 100).toInt() : parsedValue;
+  }
+
+  Future<void> _saveCapacitySettings() async {
+    final feedLimit = _parseNumberSetting(
+      _feedLimitController,
+      allowZero: false,
+    );
+    final waterLimit = _parseNumberSetting(
+      _waterLimitController,
+      allowZero: false,
+    );
+    final fillPercent = _parseNumberSetting(
+      _fillPercentController,
+      isPercent: true,
+    );
+    final refillPercent = _parseNumberSetting(
+      _refillPercentController,
+      isPercent: true,
+    );
+
+    if (feedLimit == null ||
+        waterLimit == null ||
+        fillPercent == null ||
+        refillPercent == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Masukkan angka pengaturan yang valid')),
+      );
+      return;
+    }
+
+    setState(() => _isSavingCapacity = true);
+    try {
+      await _settingsRef.update({
+        'feed_limit': feedLimit,
+        'water_limit': waterLimit,
+        'fill_percent': fillPercent,
+        'refill_percent': refillPercent,
+      });
+      _feedLimitController.text = feedLimit.toString();
+      _waterLimitController.text = waterLimit.toString();
+      _fillPercentController.text = fillPercent.toString();
+      _refillPercentController.text = refillPercent.toString();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Perubahan pengaturan berhasil disimpan')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gagal menyimpan perubahan pengaturan')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSavingCapacity = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _feedLimitController.dispose();
+    _waterLimitController.dispose();
+    _fillPercentController.dispose();
+    _refillPercentController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -152,108 +278,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionHeader(Icons.router_rounded, 'Perangkat IoT'),
+        _buildSectionHeader(Icons.inventory_2_rounded, 'Kapasitas Pakan & Air'),
         _buildCardContainer(
           children: [
-            _buildListTile(
-              title: 'Status Koneksi',
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'ESP32',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      color: onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFDCFCE7),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF22C55E),
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Terhubung',
-                          style: GoogleFonts.inter(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: const Color(0xFF166534),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+            _buildNumberSettingTile(
+              title: 'Batas Daya Tampung Pakan',
+              settingKey: 'feed_limit',
+              controller: _feedLimitController,
+              suffixText: 'g',
             ),
-            _buildListTile(
-              title: 'ID Perangkat',
-              onTap: _copyDeviceId,
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: surfaceContainer,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      'ESP32-SIPPA-001',
-                      style: GoogleFonts.robotoMono(
-                        fontSize: 12,
-                        color: onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.content_copy_rounded,
-                    size: 20,
-                    color: onSurfaceVariant,
-                  ),
-                ],
-              ),
+            _buildNumberSettingTile(
+              title: 'Batas Daya Tampung Wadah Air',
+              settingKey: 'water_limit',
+              controller: _waterLimitController,
+              suffixText: 'ml',
             ),
-            _buildListTile(
-              title: 'Interval Pembaruan Data',
-              onTap: _showIntervalSheet,
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '5 detik',
-                    style: GoogleFonts.inter(
-                      fontSize: 14,
-                      color: onSurfaceVariant,
+            _buildNumberSettingTile(
+              title: 'Isi Sampai',
+              settingKey: 'fill_percent',
+              controller: _fillPercentController,
+              suffixText: '%',
+            ),
+            _buildNumberSettingTile(
+              title: 'Mulai Isi Saat Sisa',
+              settingKey: 'refill_percent',
+              controller: _refillPercentController,
+              suffixText: '%',
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _isSavingCapacity ? null : _saveCapacitySettings,
+                  icon: _isSavingCapacity
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.save_rounded),
+                  label: Text(
+                    _isSavingCapacity ? 'Menyimpan...' : 'Simpan Perubahan',
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.chevron_right_rounded,
-                    size: 24,
-                    color: onSurfaceVariant,
-                  ),
-                ],
+                ),
               ),
             ),
           ],
@@ -272,22 +351,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _buildSwitchTile(
               title: 'Notifikasi Pakan dan Air Habis',
               value: _notifPakanHabis,
-              onChanged: (val) => setState(() => _notifPakanHabis = val),
+              onChanged: (val) {
+                setState(() => _notifPakanHabis = val);
+                _updateNotificationSetting('stock_alert', val);
+              },
             ),
             _buildSwitchTile(
               title: 'Peringatan Suhu dan Kelembaban',
               value: _notifSuhu,
-              onChanged: (val) => setState(() => _notifSuhu = val),
+              onChanged: (val) {
+                setState(() => _notifSuhu = val);
+                _updateNotificationSetting('temperature_alert', val);
+              },
             ),
             _buildSwitchTile(
               title: 'Konfirmasi Jadwal',
               value: _notifJadwal,
-              onChanged: (val) => setState(() => _notifJadwal = val),
+              onChanged: (val) {
+                setState(() => _notifJadwal = val);
+                _updateNotificationSetting('schedule_confirmation', val);
+              },
             ),
             _buildSwitchTile(
               title: 'Perangkat Offline',
               value: _notifOffline,
-              onChanged: (val) => setState(() => _notifOffline = val),
+              onChanged: (val) {
+                setState(() => _notifOffline = val);
+                _updateNotificationSetting('offline_alert', val);
+              },
             ),
           ],
         ),
@@ -311,27 +402,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               trailing: Text(
                 'Versi 1.0.0',
                 style: GoogleFonts.inter(fontSize: 14, color: onSurfaceVariant),
-              ),
-            ),
-            InkWell(
-              onTap: _confirmLogout,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Center(
-                  child: Text(
-                    'Keluar',
-                    style: GoogleFonts.manrope(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: error,
-                    ),
-                  ),
-                ),
               ),
             ),
           ],
@@ -446,6 +516,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _buildNumberSettingTile({
+    required String title,
+    required String settingKey,
+    required TextEditingController controller,
+    required String suffixText,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  settingKey,
+                  style: GoogleFonts.robotoMono(
+                    fontSize: 12,
+                    color: onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          SizedBox(
+            width: 116,
+            child: TextField(
+              controller: controller,
+              textAlign: TextAlign.right,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.done,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: onSurface,
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: true,
+                fillColor: surfaceContainer,
+                suffixText: suffixText,
+                suffixStyle: GoogleFonts.inter(color: onSurfaceVariant),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 12,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              onSubmitted: (_) => _saveCapacitySettings(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openEditProfile() async {
     final updated = await Navigator.of(context).push<UserProfile>(
       MaterialPageRoute(
@@ -461,48 +601,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ).showSnackBar(const SnackBar(content: Text('Profil berhasil diperbarui')));
   }
 
-  void _copyDeviceId() {
-    Clipboard.setData(const ClipboardData(text: 'ESP32-SIPPA-001'));
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('ID perangkat disalin')));
-  }
-
-  void _showIntervalSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _intervalOption('3 detik'),
-              _intervalOption('5 detik'),
-              _intervalOption('10 detik'),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _intervalOption(String value) {
-    return ListTile(
-      title: Text(value, style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-      trailing: value == '5 detik'
-          ? const Icon(Icons.check_rounded, color: primary)
-          : null,
-      onTap: () {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Interval diatur ke $value')));
-      },
-    );
-  }
-
   void _showInfoDialog(String title, String message) {
     showDialog<void>(
       context: context,
@@ -513,29 +611,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmLogout() {
-    showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Keluar dari akun?'),
-        content: const Text('Anda akan kembali ke halaman splash SIPPA.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false);
-            },
-            child: const Text('Keluar'),
           ),
         ],
       ),

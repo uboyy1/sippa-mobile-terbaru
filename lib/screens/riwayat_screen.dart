@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_database/firebase_database.dart';
-import 'package:intl/intl.dart';
 import '../widgets/responsive_content.dart';
 
 class RiwayatScreen extends StatefulWidget {
@@ -43,10 +42,9 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     super.dispose();
   }
 
-  // ── Firebase: ambil 50 log terbaru ──────────────────────
+  // ── Firebase: ambil semua log aktif 24 jam terakhir ─────
   void _listenLogs() {
-    // limitToLast(50) → ambil 50 entri terbaru saja
-    _logsRef.orderByKey().limitToLast(50).onValue.listen((event) {
+    _logsRef.onValue.listen((event) {
       final raw = event.snapshot.value;
       if (!mounted) return;
 
@@ -64,9 +62,15 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
 
       rawMap.forEach((key, value) {
         final log = Map<String, dynamic>.from(value as Map);
+        final timestamp = log['timestamp'];
+        final dt = _parseTimestamp(timestamp);
+        if (dt != null && _nowWita.difference(dt).inHours >= 24) {
+          _logsRef.child(key.toString()).remove();
+          return;
+        }
         parsed.add({
           'id': key,
-          'timestamp': log['timestamp']?.toString() ?? '',
+          'timestamp': timestamp,
           'type': log['type']?.toString() ?? 'sistem',
           'status': log['status']?.toString() ?? 'sukses',
           'title': log['title']?.toString() ?? '-',
@@ -77,7 +81,12 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
       });
 
       // Sort terbaru di atas (descending by key/timestamp)
-      parsed.sort((a, b) => b['id'].compareTo(a['id']));
+      parsed.sort((a, b) {
+        final aTime = _parseTimestamp(a['timestamp']);
+        final bTime = _parseTimestamp(b['timestamp']);
+        if (aTime != null && bTime != null) return bTime.compareTo(aTime);
+        return b['id'].compareTo(a['id']);
+      });
 
       setState(() {
         _allLogs = parsed;
@@ -108,32 +117,32 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     });
   }
 
+  Future<void> _deleteAllLogs() async {
+    await _logsRef.remove();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Semua riwayat berhasil dihapus',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: primary,
+      ),
+    );
+  }
+
   // ── Kelompokkan logs berdasarkan tanggal ─────────────────
   Map<String, List<Map<String, dynamic>>> _groupByDate(
     List<Map<String, dynamic>> logs,
   ) {
     final Map<String, List<Map<String, dynamic>>> grouped = {};
-    final today = DateFormat('yyyy-MM-dd').format(DateTime.now());
-    final yesterday = DateFormat(
-      'yyyy-MM-dd',
-    ).format(DateTime.now().subtract(const Duration(days: 1)));
 
     for (final log in logs) {
-      final ts = log['timestamp'].toString();
       String dateKey;
-      try {
-        final dt = DateTime.parse(ts.replaceAll(' ', 'T'));
-        final dateStr = DateFormat('yyyy-MM-dd').format(dt);
-        if (dateStr == today) {
-          dateKey = 'Aktivitas Hari Ini';
-        } else if (dateStr == yesterday) {
-          dateKey = 'Aktivitas Kemarin';
-        } else {
-          // Format: "03 Jun 2026"
-          dateKey = DateFormat('dd MMM yyyy', 'id').format(dt);
-        }
-      } catch (_) {
-        dateKey = 'Lainnya';
+      if (_isPakanAirLog(log)) {
+        dateKey = 'Aktivitas Hari Ini';
+      } else {
+        dateKey = 'Riwayat Sensor';
       }
       grouped.putIfAbsent(dateKey, () => []).add(log);
     }
@@ -162,7 +171,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
         iconColor: const Color(0xFFEA580C),
         iconBg: const Color(0xFFFFF7ED),
         borderColor: const Color(0xFFF97316),
-        categoryColor: const Color(0xFFF97316).withOpacity(0.8),
+        categoryColor: const Color(0xFFF97316).withValues(alpha: 0.8),
         categoryLabel: _categoryLabel(type),
         bgColor: Colors.white,
       );
@@ -183,6 +192,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     // sukses — bedakan berdasarkan type
     switch (type) {
       case 'pakan_otomatis':
+      case 'pakan_air_otomatis':
       case 'pakan_manual':
         return (
           icon: isOld
@@ -230,6 +240,8 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     switch (type) {
       case 'pakan_otomatis':
         return 'Pakan Otomatis';
+      case 'pakan_air_otomatis':
+        return 'Pakan & Air Otomatis';
       case 'pakan_manual':
         return 'Pakan Manual';
       case 'air_otomatis':
@@ -238,6 +250,10 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
         return 'Air Manual';
       case 'sensor':
         return 'Sensor Lingkungan';
+      case 'sensor_suhu':
+        return 'Sensor Suhu';
+      case 'sensor_kelembaban':
+        return 'Sensor Kelembaban';
       case 'sistem':
         return 'Sistem Perangkat';
       default:
@@ -245,16 +261,37 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     }
   }
 
-  // ── Parse jam dari timestamp ─────────────────────────────
-  String _timeFromTimestamp(String ts) {
-    try {
-      final dt = DateTime.parse(ts.replaceAll(' ', 'T'));
-      return DateFormat('HH:mm').format(dt);
-    } catch (_) {
-      return ts;
+  DateTime get _nowWita => DateTime.now().toUtc().add(const Duration(hours: 8));
+
+  DateTime? _parseTimestamp(Object? raw) {
+    if (raw is num) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        raw.toInt(),
+        isUtc: true,
+      ).add(const Duration(hours: 8));
     }
+    final text = raw?.toString() ?? '';
+    if (text.isEmpty) return null;
+    final parsed = DateTime.tryParse(text.replaceAll(' ', 'T'));
+    if (parsed == null) return null;
+    return parsed.isUtc ? parsed.toUtc().add(const Duration(hours: 8)) : parsed;
   }
 
+  bool _isPakanAirLog(Map<String, dynamic> log) {
+    final type = log['type'].toString();
+    return type.contains('pakan') || type.contains('air');
+  }
+
+  String _relativeTime(Object? raw) {
+    final dt = _parseTimestamp(raw);
+    if (dt == null) return '-';
+    final diff = _nowWita.difference(dt);
+    if (diff.inMinutes < 1) return 'Baru saja';
+    if (diff.inHours < 1) return '${diff.inMinutes} menit lalu';
+    return '${diff.inHours} jam lalu';
+  }
+
+  // ── Parse jam dari timestamp ─────────────────────────────
   // ============================================================
   //  BUILD
   // ============================================================
@@ -274,6 +311,24 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
             letterSpacing: -0.5,
           ),
         ),
+        actions: [
+          TextButton.icon(
+            onPressed: _allLogs.isEmpty ? null : _deleteAllLogs,
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+              disabledForegroundColor: Colors.white.withValues(alpha: 0.45),
+            ),
+            icon: const Icon(Icons.delete_sweep_rounded, size: 18),
+            label: Text(
+              'Hapus Semua',
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: primary))
@@ -308,10 +363,10 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
         decoration: BoxDecoration(
           color: surfaceContainerLowest,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: outlineVariant.withOpacity(0.7)),
+          border: Border.all(color: outlineVariant.withValues(alpha: 0.7)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
+              color: Colors.black.withValues(alpha: 0.04),
               blurRadius: 28,
               offset: const Offset(0, 6),
             ),
@@ -360,57 +415,51 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     if (grouped.containsKey('Aktivitas Hari Ini')) {
       orderedKeys.add('Aktivitas Hari Ini');
     }
-    if (grouped.containsKey('Aktivitas Kemarin')) {
-      orderedKeys.add('Aktivitas Kemarin');
+    if (grouped.containsKey('Riwayat Sensor')) {
+      orderedKeys.add('Riwayat Sensor');
     }
     for (final k in grouped.keys) {
-      if (k != 'Aktivitas Hari Ini' && k != 'Aktivitas Kemarin') {
+      if (!orderedKeys.contains(k)) {
         orderedKeys.add(k);
       }
     }
 
     return Column(
       children: orderedKeys.asMap().entries.map((entry) {
-        final idx = entry.key;
         final dateLabel = entry.value;
         final logs = grouped[dateLabel]!;
-        final isOld = idx > 0; // Kemarin & sebelumnya pakai opacity
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 40),
-          child: Opacity(
-            opacity: isOld ? 0.7 : 1.0,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSectionHeader(dateLabel),
-                  const SizedBox(height: 20),
-                  ...logs.asMap().entries.map((e) {
-                    // Tandai log lama untuk visual berbeda
-                    final logData = Map<String, dynamic>.from(e.value);
-                    if (isOld) logData['_isOld'] = true;
-                    final visual = _logVisual(logData);
-                    final time = _timeFromTimestamp(logData['timestamp']);
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildSectionHeader(dateLabel),
+                const SizedBox(height: 20),
+                ...logs.asMap().entries.map((e) {
+                  final logData = Map<String, dynamic>.from(e.value);
+                  final visual = _logVisual(logData);
+                  final time = _relativeTime(logData['timestamp']);
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: _riwayatCard(
-                        category: visual.categoryLabel,
-                        title: '$time - ${logData['title']}',
-                        desc: logData['desc'],
-                        icon: visual.icon,
-                        iconColor: visual.iconColor,
-                        iconBg: visual.iconBg,
-                        borderColor: visual.borderColor,
-                        bgColor: visual.bgColor,
-                        categoryColor: visual.categoryColor,
-                      ),
-                    );
-                  }),
-                ],
-              ),
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: _riwayatCard(
+                      category: visual.categoryLabel,
+                      title: logData['title'],
+                      desc: logData['desc'],
+                      time: time,
+                      icon: visual.icon,
+                      iconColor: visual.iconColor,
+                      iconBg: visual.iconBg,
+                      borderColor: visual.borderColor,
+                      bgColor: visual.bgColor,
+                      categoryColor: visual.categoryColor,
+                    ),
+                  );
+                }),
+              ],
             ),
           ),
         );
@@ -462,6 +511,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     required String category,
     required String title,
     required String desc,
+    required String time,
     required IconData icon,
     required Color iconColor,
     required Color iconBg,
@@ -470,14 +520,14 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
     Color? categoryColor,
   }) {
     return Container(
-      height: 96,
+      constraints: const BoxConstraints(minHeight: 108),
       decoration: BoxDecoration(
         color: bgColor,
         borderRadius: BorderRadius.circular(12),
         boxShadow: bgColor == Colors.white
             ? [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.04),
+                  color: Colors.black.withValues(alpha: 0.04),
                   blurRadius: 32,
                   offset: const Offset(0, 4),
                 ),
@@ -527,6 +577,17 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
                   Text(
                     desc,
                     style: GoogleFonts.inter(fontSize: 12, color: outline),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    time,
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: onSurfaceVariant.withValues(alpha: 0.7),
+                    ),
                   ),
                 ],
               ),
