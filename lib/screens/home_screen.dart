@@ -91,6 +91,17 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // ── Smart number formatter ───────────────────────────────
+  /// Tampilkan angka tanpa trailing zero:
+  /// 28.0 → "28", 28.5 → "28.5", 28.50 → "28.5"
+  String _fmtNum(double value, {int maxDecimals = 1}) {
+    if (value == value.roundToDouble()) return value.round().toString();
+    return value
+        .toStringAsFixed(maxDecimals)
+        .replaceAll(RegExp(r'0+$'), '')
+        .replaceAll(RegExp(r'\.$'), '');
+  }
+
   void _listenFirebase() {
     _statusRef.onValue.listen((event) {
       final data = event.snapshot.value as Map?;
@@ -634,8 +645,7 @@ class _HomeScreenState extends State<HomeScreen> {
         'type': 'sensor_suhu',
         'status': 'peringatan',
         'title': 'Peringatan Suhu',
-        'desc':
-            'Suhu kandang ${temperature.toStringAsFixed(1)}°C di luar batas ideal.',
+        'desc': 'Suhu kandang ${_fmtNum(temperature)}°C di luar batas ideal.',
         'value': temperature,
         'unit': '°C',
       });
@@ -646,8 +656,7 @@ class _HomeScreenState extends State<HomeScreen> {
           'type': 'suhu',
           'target': 'dashboard',
           'title': 'Peringatan Suhu',
-          'desc':
-              'Suhu kandang ${temperature.toStringAsFixed(1)}°C di luar batas ideal.',
+          'desc': 'Suhu kandang ${_fmtNum(temperature)}°C di luar batas ideal.',
           'read': false,
         });
       }
@@ -659,8 +668,7 @@ class _HomeScreenState extends State<HomeScreen> {
         'type': 'sensor_kelembaban',
         'status': 'peringatan',
         'title': 'Peringatan Kelembaban',
-        'desc':
-            'Kelembaban kandang ${humidity.toStringAsFixed(1)}% di luar batas ideal.',
+        'desc': 'Kelembaban kandang ${_fmtNum(humidity)}% di luar batas ideal.',
         'value': humidity,
         'unit': '%',
       });
@@ -672,7 +680,7 @@ class _HomeScreenState extends State<HomeScreen> {
           'target': 'dashboard',
           'title': 'Peringatan Kelembaban',
           'desc':
-              'Kelembaban kandang ${humidity.toStringAsFixed(1)}% di luar batas ideal.',
+              'Kelembaban kandang ${_fmtNum(humidity)}% di luar batas ideal.',
           'read': false,
         });
       }
@@ -832,33 +840,18 @@ class _HomeScreenState extends State<HomeScreen> {
   int _feedPercent() => _stockPercent(_feedWeight, _feedLimit);
   int _waterPercent() => _stockPercent(_waterWeight, _waterLimit);
 
+  /// Hanya return data nyata dari Firebase, tanpa titik artifisial.
   List<FlSpot> _dailyChartSpots(List<FlSpot> source, double minY, double maxY) {
-    final nowHour =
-        _nowWita.hour + (_nowWita.minute / 60) + (_nowWita.second / 3600);
-    final spots =
-        source
-            .map(
-              (spot) => FlSpot(
-                spot.x.clamp(0, 24).toDouble(),
-                spot.y.clamp(minY, maxY).toDouble(),
-              ),
-            )
-            .toList()
-          ..sort((a, b) => a.x.compareTo(b.x));
-    if (spots.isEmpty) {
-      return [FlSpot(0, minY), FlSpot(nowHour, minY)];
-    }
-
-    final result = <FlSpot>[FlSpot(0, minY)];
-    final first = spots.first;
-    if (first.x > 0) {
-      result.add(FlSpot((first.x - 0.01).clamp(0, 24).toDouble(), minY));
-    }
-    result.addAll(spots);
-    if (result.last.x < nowHour) {
-      result.add(FlSpot(nowHour, result.last.y));
-    }
-    return result;
+    if (source.isEmpty) return [];
+    return source
+        .map(
+          (spot) => FlSpot(
+            spot.x.clamp(0, 24).toDouble(),
+            spot.y.clamp(minY, maxY).toDouble(),
+          ),
+        )
+        .toList()
+      ..sort((a, b) => a.x.compareTo(b.x));
   }
 
   // ── Build ────────────────────────────────────────────────
@@ -1020,8 +1013,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 iconColor: primary,
                 borderColor: primary,
                 label: 'Suhu',
-                // Tampilkan 1 desimal
-                value: '${_temperature.toStringAsFixed(1)}°C',
+                // ✅ Pakai _fmtNum: 28.0 → "28°C", 28.5 → "28.5°C"
+                value: '${_fmtNum(_temperature)}°C',
                 status: suhuStatus.label,
                 statusColor: suhuStatus.color,
               ),
@@ -1032,7 +1025,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 iconColor: primary,
                 borderColor: primary,
                 label: 'Kelembaban',
-                value: '${_humidity.toStringAsFixed(1)}%',
+                // ✅ Pakai _fmtNum: 65.0 → "65%", 65.3 → "65.3%"
+                value: '${_fmtNum(_humidity)}%',
                 status: kelembabanStatus.label,
                 statusColor: kelembabanStatus.color,
               ),
@@ -1244,6 +1238,9 @@ class _HomeScreenState extends State<HomeScreen> {
             interval: 5,
             unit: '°',
             color: const Color(0xFFF59E0B),
+            // Zone ideal suhu: 22–29°C
+            idealMin: 22,
+            idealMax: 29,
           ),
           const SizedBox(height: 20),
           _lineChartCard(
@@ -1254,6 +1251,9 @@ class _HomeScreenState extends State<HomeScreen> {
             interval: 20,
             unit: '%',
             color: const Color(0xFF1976D2),
+            // Zone ideal kelembaban: 50–70%
+            idealMin: 50,
+            idealMax: 70,
           ),
         ],
       ),
@@ -1268,7 +1268,16 @@ class _HomeScreenState extends State<HomeScreen> {
     required double interval,
     required String unit,
     required Color color,
+    double? idealMin,
+    double? idealMax,
   }) {
+    final nowHour =
+        _nowWita.hour + (_nowWita.minute / 60) + (_nowWita.second / 3600);
+    final hasData = spots.isNotEmpty;
+
+    // Nilai terkini untuk badge
+    final latestValue = hasData ? spots.last.y : null;
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
       decoration: BoxDecoration(
@@ -1285,108 +1294,304 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: GoogleFonts.manrope(
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-              color: onSurface,
-              letterSpacing: -0.3,
-            ),
+          // ── Header: judul + badge nilai terkini ─────────
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.manrope(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: onSurface,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+              ),
+              if (latestValue != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    // ✅ Badge juga pakai _fmtNum
+                    '${_fmtNum(latestValue)}$unit',
+                    style: GoogleFonts.inter(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: color,
+                    ),
+                  ),
+                ),
+            ],
           ),
           const SizedBox(height: 20),
+
+          // ── Chart area ───────────────────────────────────
           SizedBox(
-            height: 160,
-            child: LineChart(
-              LineChartData(
-                minX: 0,
-                maxX: 24,
-                minY: minY,
-                maxY: maxY,
-                clipData: const FlClipData.all(),
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  getDrawingHorizontalLine: (value) => FlLine(
-                    color: outlineVariant.withOpacity(0.5),
-                    strokeWidth: 1,
-                  ),
-                ),
-                borderData: FlBorderData(
-                  show: true,
-                  border: Border(
-                    left: BorderSide(color: outlineVariant.withOpacity(0.5)),
-                    bottom: BorderSide(color: outlineVariant.withOpacity(0.5)),
-                  ),
-                ),
-                titlesData: FlTitlesData(
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 40,
-                      interval: interval,
-                      getTitlesWidget: (val, _) => Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: Text(
-                          '${val.toInt()}$unit',
+            height: 170,
+            child: !hasData
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.show_chart_rounded,
+                          color: outlineVariant,
+                          size: 32,
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Belum ada data hari ini',
                           style: GoogleFonts.inter(
-                            fontSize: 10,
+                            fontSize: 12,
                             color: onSurfaceVariant,
                           ),
                         ),
-                      ),
+                      ],
                     ),
-                  ),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 28,
-                      interval: 3,
-                      getTitlesWidget: (val, _) {
-                        final hour = val.round();
-                        if (hour % 3 != 0 || hour < 0 || hour > 24) {
-                          return const SizedBox.shrink();
-                        }
-                        return Text(
-                          '${hour.toString().padLeft(2, '0')}:00',
-                          style: GoogleFonts.inter(
-                            fontSize: 9,
-                            color: onSurfaceVariant,
-                            fontWeight: FontWeight.w500,
+                  )
+                : LineChart(
+                    LineChartData(
+                      minX: 0,
+                      maxX: 24,
+                      minY: minY,
+                      maxY: maxY,
+                      clipData: const FlClipData.all(),
+
+                      // ── Tooltip interaktif ───────────────
+                      lineTouchData: LineTouchData(
+                        enabled: true,
+                        touchTooltipData: LineTouchTooltipData(
+                          getTooltipColor: (_) => onSurface.withOpacity(0.88),
+                          tooltipRoundedRadius: 8,
+                          tooltipPadding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 7,
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                  rightTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                  topTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                ),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: spots,
-                    isCurved: true,
-                    color: color,
-                    barWidth: 2.5,
-                    dotData: const FlDotData(show: true),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          color.withOpacity(0.22),
-                          color.withOpacity(0.0),
+                          getTooltipItems: (touchedSpots) => touchedSpots.map((
+                            s,
+                          ) {
+                            final h = s.x.floor();
+                            final m = ((s.x - h) * 60).round();
+                            return LineTooltipItem(
+                              '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}\n',
+                              GoogleFonts.inter(
+                                fontSize: 10,
+                                color: Colors.white54,
+                              ),
+                              children: [
+                                TextSpan(
+                                  // ✅ Tooltip juga pakai _fmtNum
+                                  text: '${_fmtNum(s.y)}$unit',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: color,
+                                  ),
+                                ),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ),
+
+                      // ── Grid ────────────────────────────
+                      gridData: FlGridData(
+                        show: true,
+                        drawVerticalLine: true,
+                        verticalInterval: 6,
+                        horizontalInterval: interval,
+                        getDrawingHorizontalLine: (_) => FlLine(
+                          color: outlineVariant.withOpacity(0.4),
+                          strokeWidth: 1,
+                          dashArray: [4, 4],
+                        ),
+                        getDrawingVerticalLine: (_) => FlLine(
+                          color: outlineVariant.withOpacity(0.25),
+                          strokeWidth: 1,
+                          dashArray: [4, 4],
+                        ),
+                      ),
+
+                      // ── Border ───────────────────────────
+                      borderData: FlBorderData(
+                        show: true,
+                        border: Border(
+                          left: BorderSide(
+                            color: outlineVariant.withOpacity(0.5),
+                          ),
+                          bottom: BorderSide(
+                            color: outlineVariant.withOpacity(0.5),
+                          ),
+                        ),
+                      ),
+
+                      // ── Titles ───────────────────────────
+                      titlesData: FlTitlesData(
+                        leftTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 44,
+                            interval: interval,
+                            getTitlesWidget: (val, _) => Padding(
+                              padding: const EdgeInsets.only(right: 4),
+                              child: Text(
+                                // ✅ Y-axis labels juga pakai _fmtNum
+                                '${_fmtNum(val)}$unit',
+                                style: GoogleFonts.inter(
+                                  fontSize: 10,
+                                  color: onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        bottomTitles: AxisTitles(
+                          sideTitles: SideTitles(
+                            showTitles: true,
+                            reservedSize: 28,
+                            interval: 3,
+                            getTitlesWidget: (val, _) {
+                              final hour = val.round();
+                              if (hour % 3 != 0 || hour < 0 || hour > 24) {
+                                return const SizedBox.shrink();
+                              }
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  '${hour.toString().padLeft(2, '0')}:00',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 9,
+                                    color: onSurfaceVariant,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        rightTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                        topTitles: const AxisTitles(
+                          sideTitles: SideTitles(showTitles: false),
+                        ),
+                      ),
+
+                      // ── Line data ────────────────────────
+                      lineBarsData: [
+                        LineChartBarData(
+                          spots: spots,
+                          isCurved: true,
+                          curveSmoothness: 0.3,
+                          color: color,
+                          barWidth: 2.5,
+                          // Dot kecil & bersih hanya di titik data nyata
+                          dotData: FlDotData(
+                            show: true,
+                            getDotPainter: (spot, _, __, ___) =>
+                                FlDotCirclePainter(
+                                  radius: 3,
+                                  color: color,
+                                  strokeWidth: 1.5,
+                                  strokeColor: Colors.white,
+                                ),
+                          ),
+                          belowBarData: BarAreaData(
+                            show: true,
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                color.withOpacity(0.20),
+                                color.withOpacity(0.0),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+
+                      // ── Extra lines: "Sekarang" + zone ideal ──
+                      extraLinesData: ExtraLinesData(
+                        // Garis vertikal waktu sekarang
+                        verticalLines: [
+                          VerticalLine(
+                            x: nowHour,
+                            color: primary.withOpacity(0.5),
+                            strokeWidth: 1.5,
+                            dashArray: [4, 4],
+                            label: VerticalLineLabel(
+                              show: true,
+                              alignment: Alignment.topRight,
+                              padding: const EdgeInsets.only(
+                                right: 4,
+                                bottom: 4,
+                              ),
+                              style: GoogleFonts.inter(
+                                fontSize: 9,
+                                color: primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              labelResolver: (_) => 'Sekarang',
+                            ),
+                          ),
+                        ],
+                        // Garis horizontal batas ideal (atas & bawah)
+                        horizontalLines: [
+                          if (idealMin != null)
+                            HorizontalLine(
+                              y: idealMin,
+                              color: success.withOpacity(0.4),
+                              strokeWidth: 1,
+                              dashArray: [6, 4],
+                              label: HorizontalLineLabel(
+                                show: true,
+                                alignment: Alignment.topRight,
+                                padding: const EdgeInsets.only(
+                                  right: 4,
+                                  bottom: 2,
+                                ),
+                                style: GoogleFonts.inter(
+                                  fontSize: 8,
+                                  color: success,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                labelResolver: (_) =>
+                                    'Min ideal (${_fmtNum(idealMin)}$unit)',
+                              ),
+                            ),
+                          if (idealMax != null)
+                            HorizontalLine(
+                              y: idealMax,
+                              color: success.withOpacity(0.4),
+                              strokeWidth: 1,
+                              dashArray: [6, 4],
+                              label: HorizontalLineLabel(
+                                show: true,
+                                alignment: Alignment.topRight,
+                                padding: const EdgeInsets.only(
+                                  right: 4,
+                                  bottom: 2,
+                                ),
+                                style: GoogleFonts.inter(
+                                  fontSize: 8,
+                                  color: success,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                labelResolver: (_) =>
+                                    'Maks ideal (${_fmtNum(idealMax)}$unit)',
+                              ),
+                            ),
                         ],
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
           ),
         ],
       ),
