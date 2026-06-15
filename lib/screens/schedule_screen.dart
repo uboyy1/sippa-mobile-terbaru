@@ -40,6 +40,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   double _waterWeight = 0;
   double _feedLimit = 500;
   double _waterLimit = 500;
+  bool _scheduleConfirmationEnabled = true;
+  bool _settingsLoaded = false;
   bool _isLoading = true;
   Timer? _clockTimer;
 
@@ -138,21 +140,74 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return value > 0 ? value : fallback;
   }
 
+  int _toIntValue(Object? raw) {
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '') ?? 0;
+  }
+
+  String _scheduleTypeFromData(Map<String, dynamic> data) {
+    final rawType = data['type']?.toString();
+    final portion = _toIntValue(data['portion']);
+    final water = _toIntValue(data['water']);
+    if (rawType == 'pakan_air' || rawType == 'pakan' || rawType == 'air') {
+      if (rawType == 'pakan' && water > 0) {
+        return portion > 0 ? 'pakan_air' : 'air';
+      }
+      return rawType!;
+    }
+
+    final hasPakan = data['pakan'] == true || portion > 0;
+    final hasAir = data['air'] == true || water > 0;
+    if (hasPakan && hasAir) return 'pakan_air';
+    if (hasAir) return 'air';
+    return 'pakan';
+  }
+
   bool _shouldCancelSchedule(Map<String, dynamic> schedule) {
-    final pakan = schedule['pakan'] == true;
-    final air = schedule['air'] == true;
-    return (pakan && _feedPercent() > 50) || (air && _waterPercent() > 50);
+    return _scheduleCancelReasons(schedule).isNotEmpty;
   }
 
   String _cancelReason(Map<String, dynamic> schedule) {
+    return _scheduleCancelReasons(schedule).join(' dan ');
+  }
+
+  List<String> _scheduleCancelReasons(Map<String, dynamic> schedule) {
     final reasons = <String>[];
-    if (schedule['pakan'] == true && _feedPercent() > 50) {
-      reasons.add('pakan ${_feedPercent()}%');
+    if (schedule['pakan'] == true) {
+      final portion = _toIntValue(schedule['portion']);
+      final emptyFeed = (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
+      if (_feedPercent() > 50) {
+        reasons.add('stok pakan ${_feedPercent()}% masih di atas 50%');
+      } else if (portion <= 0) {
+        reasons.add('jumlah pakan belum diatur');
+      } else if (portion > emptyFeed) {
+        reasons.add('pakan ${portion}g melebihi ruang kosong ${emptyFeed}g');
+      }
     }
-    if (schedule['air'] == true && _waterPercent() > 50) {
-      reasons.add('air ${_waterPercent()}%');
+    if (schedule['air'] == true) {
+      final water = _toIntValue(schedule['water']);
+      final emptyWater = (_waterLimit - _waterWeight)
+          .clamp(0, _waterLimit)
+          .floor();
+      if (_waterPercent() > 50) {
+        reasons.add('stok air ${_waterPercent()}% masih di atas 50%');
+      } else if (water <= 0) {
+        reasons.add('jumlah air belum diatur');
+      } else if (water > emptyWater) {
+        reasons.add('air ${water}ml melebihi ruang kosong ${emptyWater}ml');
+      }
     }
-    return reasons.join(' dan ');
+    return reasons;
+  }
+
+  ({int portion, int water}) _scheduleRunAmounts(
+    Map<String, dynamic> schedule,
+  ) {
+    final portion = schedule['pakan'] == true
+        ? _toIntValue(schedule['portion'])
+        : 0;
+    final water = schedule['air'] == true ? _toIntValue(schedule['water']) : 0;
+    return (portion: portion, water: water);
   }
 
   @override
@@ -193,6 +248,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         _waterWeight = _toStockUnit(data['water_weight'], _waterLimit);
       });
       _syncTodayRuns(_allSchedules.values.toList());
+      _recordCompletedSchedules(_todayRunStatus);
     });
   }
 
@@ -201,12 +257,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       if (!mounted) return;
       final data = event.snapshot.value as Map?;
       if (data == null) return;
+      final notifications = data['notifications'] as Map?;
 
       setState(() {
+        _scheduleConfirmationEnabled =
+            notifications?['schedule_confirmation'] != false;
         _feedLimit = _toPositiveLimit(data['feed_limit'], _feedLimit);
         _waterLimit = _toPositiveLimit(data['water_limit'], _waterLimit);
         _feedWeight = _feedWeight.clamp(0, _feedLimit).toDouble();
         _waterWeight = _waterWeight.clamp(0, _waterLimit).toDouble();
+        _settingsLoaded = true;
       });
       _syncTodayRuns(_allSchedules.values.toList());
     });
@@ -248,17 +308,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         }
 
         // type: "pakan" | "air" | "pakan_air"
-        final type = jadwal['type']?.toString() ?? 'pakan_air';
+        final type = _scheduleTypeFromData(jadwal);
         final repeatRaw = jadwal['repeat'];
         final repeatsWeekly =
             repeatRaw == true ||
             repeatRaw == 'Setiap Minggu' ||
             repeatRaw == 'Setiap Hari';
-        final waterRaw = jadwal['water'];
-        final water = waterRaw is num
-            ? waterRaw.toInt()
-            : int.tryParse(waterRaw?.toString() ?? '') ?? 0;
-
         parsed[key] = {
           'id': key,
           'time': jadwal['time']?.toString() ?? '00:00',
@@ -266,8 +321,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           'pakan': type == 'pakan' || type == 'pakan_air',
           'air': type == 'air' || type == 'pakan_air',
           'type': type,
-          'portion': (jadwal['portion'] as num?)?.toInt() ?? 0,
-          'water': water,
+          'portion': _toIntValue(jadwal['portion']),
+          'water': _toIntValue(jadwal['water']),
           'days': _dayLabels,
           'activeDays': activeDays,
           'isActive': jadwal['active'] == true,
@@ -302,6 +357,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         parsed[key] = Map<String, dynamic>.from(value as Map);
       });
       setState(() => _todayRunStatus = parsed);
+      _recordCompletedSchedules(parsed);
     });
   }
 
@@ -340,13 +396,32 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               (due && !_shouldCancelSchedule(schedule)));
       final shouldCancel = !isDone && due && _shouldCancelSchedule(schedule);
       final shouldDispatch = isDone && due && existing['dispatched_at'] == null;
+      final schedulePortion = _toIntValue(schedule['portion']);
+      final scheduleWater = _toIntValue(schedule['water']);
+      final dispatchAmounts = _scheduleRunAmounts(schedule);
+      final runPortion = schedule['pakan'] == true
+          ? (shouldDispatch
+                ? dispatchAmounts.portion
+                : (isDone && existing.containsKey('portion')
+                      ? _toIntValue(existing['portion'])
+                      : schedulePortion))
+          : 0;
+      final runWater = schedule['air'] == true
+          ? (shouldDispatch
+                ? dispatchAmounts.water
+                : (isDone && existing.containsKey('water')
+                      ? _toIntValue(existing['water'])
+                      : scheduleWater))
+          : 0;
       await todayRef.child(id).update({
         'time': time,
         'pakan': schedule['pakan'],
         'air': schedule['air'],
-        'portion': schedule['portion'],
-        'water': schedule['water'],
-        'status': shouldCancel
+        'portion': runPortion,
+        'water': runWater,
+        'requested_portion': schedulePortion,
+        'requested_water': scheduleWater,
+        'status': shouldCancel || isCancelled
             ? 'dibatalkan'
             : (isDone ? 'selesai' : 'menunggu'),
         'done': isDone,
@@ -362,7 +437,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       if (shouldCancel) {
         await _recordCancelledSchedule(id, schedule, time);
       } else if (shouldDispatch) {
-        await _dispatchAutomaticSchedule(schedule);
+        await _dispatchAutomaticSchedule(
+          schedule,
+          portion: runPortion,
+          water: runWater,
+        );
+        await _recordCompletedSchedule(
+          id: id,
+          time: time,
+          pakan: schedule['pakan'] == true,
+          air: schedule['air'] == true,
+          portion: runPortion,
+          water: runWater,
+          timestamp: existing['completed_at'] ?? ServerValue.timestamp,
+        );
       }
       if ((shouldCancel || isDone) && schedule['repeat'] != 'Setiap Minggu') {
         await _schedulesRef.child(id).update({'active': false});
@@ -370,22 +458,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
-  Future<void> _dispatchAutomaticSchedule(Map<String, dynamic> schedule) async {
+  Future<void> _dispatchAutomaticSchedule(
+    Map<String, dynamic> schedule, {
+    required int portion,
+    required int water,
+  }) async {
     final updates = <String, Object?>{};
     if (schedule['pakan'] == true) {
-      final emptyFeed = (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
-      updates['portion'] = ((schedule['portion'] as num?)?.toInt() ?? 0)
-          .clamp(0, emptyFeed)
-          .toInt();
+      updates['portion'] = portion;
       updates['manual_feed'] = true;
     }
     if (schedule['air'] == true) {
-      final emptyWater = (_waterLimit - _waterWeight)
-          .clamp(0, _waterLimit)
-          .floor();
-      updates['water_volume'] = ((schedule['water'] as num?)?.toInt() ?? 0)
-          .clamp(0, emptyWater)
-          .toInt();
+      updates['water_volume'] = water;
       updates['manual_water'] = true;
     }
     if (updates.isNotEmpty) {
@@ -401,8 +485,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final pakan = schedule['pakan'] == true;
     final air = schedule['air'] == true;
     final label = pakan && air ? 'pakan dan air' : (pakan ? 'pakan' : 'air');
+    final reason = _cancelReason(schedule);
     final desc =
-        'Jadwal pemberian $label pukul $time dibatalkan karena persediaan ${_cancelReason(schedule)} masih mencukupi (di atas 50%).';
+        'Jadwal pemberian $label pukul $time dibatalkan karena $reason.';
     final key = 'jadwal_batal_${_todayDateKey}_$id';
 
     await _logsRef.child(key).update({
@@ -413,13 +498,105 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       'desc': desc,
     });
     final notificationSnapshot = await _notificationsRef.child(key).get();
-    if (!notificationSnapshot.exists) {
+    if (_settingsLoaded &&
+        _scheduleConfirmationEnabled &&
+        !notificationSnapshot.exists) {
       await _notificationsRef.child(key).set({
         'timestamp': ServerValue.timestamp,
         'type': 'jadwal_dibatalkan',
         'target': 'jadwal',
         'title': 'Jadwal Otomatis Dibatalkan',
         'desc': desc,
+        'read': false,
+      });
+    }
+  }
+
+  Future<void> _recordCompletedSchedules(
+    Map<String, Map<String, dynamic>> runs,
+  ) async {
+    for (final entry in runs.entries) {
+      final run = entry.value;
+      if (run['cancelled'] == true || run['status'] == 'dibatalkan') continue;
+      final done = run['done'] == true || run['status'] == 'selesai';
+      if (!done) continue;
+      final schedule = _allSchedules[entry.key];
+      final time =
+          run['time']?.toString() ?? schedule?['time']?.toString() ?? '';
+      final pakan = run['pakan'] == true || schedule?['pakan'] == true;
+      final air = run['air'] == true || schedule?['air'] == true;
+      final portion = run.containsKey('portion')
+          ? _toIntValue(run['portion'])
+          : _toIntValue(schedule?['portion']);
+      final water = run.containsKey('water')
+          ? _toIntValue(run['water'])
+          : _toIntValue(schedule?['water']);
+
+      await _recordCompletedSchedule(
+        id: entry.key,
+        time: time,
+        pakan: pakan,
+        air: air,
+        portion: portion,
+        water: water,
+        timestamp: run['completed_at'] ?? ServerValue.timestamp,
+      );
+    }
+  }
+
+  Future<void> _recordCompletedSchedule({
+    required String id,
+    required String time,
+    required bool pakan,
+    required bool air,
+    required int portion,
+    required int water,
+    Object? timestamp,
+  }) async {
+    final parts = <String>[
+      if (pakan) '${portion}g pakan',
+      if (air) '${water}ml air',
+    ];
+    final type = pakan && air
+        ? 'pakan_air_otomatis'
+        : (pakan ? 'pakan_otomatis' : 'air_otomatis');
+    final label = pakan && air ? 'Pakan & Air' : (pakan ? 'Pakan' : 'Air');
+    final title = 'Jadwal $label $time selesai';
+    final desc = parts.isEmpty
+        ? 'Pemberian otomatis selesai.'
+        : 'Pemberian ${parts.join(' dan ')} selesai sesuai jadwal.';
+    final key = 'jadwal_${_todayDateKey}_$id';
+    final eventTimestamp = timestamp ?? ServerValue.timestamp;
+
+    await _logsRef.child(key).update({
+      'timestamp': eventTimestamp,
+      'type': type,
+      'status': 'sukses',
+      'title': title,
+      'desc': desc,
+      'schedule_id': id,
+      'date': _todayDateKey,
+      'pakan': pakan,
+      'air': air,
+      'portion': portion,
+      'water': water,
+    });
+    final notificationSnapshot = await _notificationsRef.child(key).get();
+    if (_scheduleConfirmationEnabled && !notificationSnapshot.exists) {
+      await _notificationsRef.child(key).set({
+        'timestamp': eventTimestamp,
+        'type': type,
+        'target': 'riwayat',
+        'title': title,
+        'desc': parts.isEmpty
+            ? 'Pemberian otomatis selesai.'
+            : '${parts.join(' dan ')} berhasil diberikan sesuai jadwal.',
+        'schedule_id': id,
+        'date': _todayDateKey,
+        'pakan': pakan,
+        'air': air,
+        'portion': portion,
+        'water': water,
         'read': false,
       });
     }
@@ -509,24 +686,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       daysMap[i.toString()] = activeDays[i];
     }
 
-    // Tentukan type dari flag pakan/air
-    final pakan = data['pakan'] == true;
-    final air = data['air'] == true;
-    String type = 'pakan';
-    if (pakan && air) {
-      type = 'pakan_air';
-    } else if (air) {
-      type = 'air';
-    }
+    // Tentukan type dari flag pakan/air, fallback ke type untuk payload lama.
+    final type = _scheduleTypeFromData(data);
+    final pakan = type == 'pakan' || type == 'pakan_air';
+    final air = type == 'air' || type == 'pakan_air';
+    final repeatRaw = data['repeat'];
+    final repeatsWeekly =
+        repeatRaw == true ||
+        repeatRaw == 'Setiap Minggu' ||
+        repeatRaw == 'Setiap Hari';
 
     await _schedulesRef.child(id).set({
-      'active': data['isActive'] ?? true,
+      'active': data['isActive'] ?? data['active'] ?? true,
       'days': daysMap,
-      'portion': data['portion'] ?? 200,
-      'repeat': data['repeat'] == 'Setiap Minggu',
+      'portion': pakan ? data['portion'] ?? 200 : 0,
+      'repeat': repeatsWeekly,
       'time': data['time'] ?? '08:00',
       'type': type,
-      'water': data['water'] ?? 0,
+      'water': air ? data['water'] ?? 0 : 0,
       'start_at': data['start_at'],
     });
   }
@@ -949,10 +1126,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                             Icons.water_drop_rounded,
                             'Air ${jadwal['water']}ml',
                           ),
-                        _infoChip(
-                          Icons.calendar_month_rounded,
-                          'Hari ${_activeDayLabel(days, activeDays)}',
-                        ),
                         _infoChip(Icons.repeat_rounded, repeatLabel),
                       ],
                     ),
@@ -1016,14 +1189,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         ),
       ],
     );
-  }
-
-  String _activeDayLabel(List<String> days, List<bool> activeDays) {
-    final labels = <String>[];
-    for (var i = 0; i < days.length && i < activeDays.length; i++) {
-      if (activeDays[i]) labels.add(days[i]);
-    }
-    return labels.isEmpty ? 'Belum dipilih' : labels.join(', ');
   }
 
   // ── Bottom Sheet Actions ─────────────────────────────────

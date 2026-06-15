@@ -32,7 +32,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _notifPakanHabis = true;
   bool _notifSuhu = true;
-  bool _notifJadwal = false;
+  bool _notifJadwal = true;
   bool _notifOffline = true;
   bool _isSavingCapacity = false;
 
@@ -56,7 +56,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _notifPakanHabis = notifications?['stock_alert'] != false;
         _notifSuhu = notifications?['temperature_alert'] != false;
-        _notifJadwal = notifications?['schedule_confirmation'] == true;
+        _notifJadwal = notifications?['schedule_confirmation'] != false;
         _notifOffline = notifications?['offline_alert'] != false;
       });
       _syncControllerText(_feedLimitController, data['feed_limit']);
@@ -75,8 +75,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _updateNotificationSetting(String key, bool value) {
-    return _settingsRef.child('notifications').update({key: value});
+  Future<void> _updateNotificationSetting(
+    String key,
+    bool value,
+    VoidCallback rollback,
+  ) async {
+    try {
+      await _settingsRef.child('notifications').update({key: value});
+    } catch (_) {
+      if (!mounted) return;
+      rollback();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gagal menyimpan pengaturan notifikasi')),
+      );
+    }
   }
 
   int? _parseNumberSetting(
@@ -352,32 +364,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Notifikasi Pakan dan Air Habis',
               value: _notifPakanHabis,
               onChanged: (val) {
+                final previous = _notifPakanHabis;
                 setState(() => _notifPakanHabis = val);
-                _updateNotificationSetting('stock_alert', val);
+                _updateNotificationSetting(
+                  'stock_alert',
+                  val,
+                  () => setState(() => _notifPakanHabis = previous),
+                );
               },
             ),
             _buildSwitchTile(
               title: 'Peringatan Suhu dan Kelembaban',
               value: _notifSuhu,
               onChanged: (val) {
+                final previous = _notifSuhu;
                 setState(() => _notifSuhu = val);
-                _updateNotificationSetting('temperature_alert', val);
+                _updateNotificationSetting(
+                  'temperature_alert',
+                  val,
+                  () => setState(() => _notifSuhu = previous),
+                );
               },
             ),
             _buildSwitchTile(
               title: 'Konfirmasi Jadwal',
               value: _notifJadwal,
               onChanged: (val) {
+                final previous = _notifJadwal;
                 setState(() => _notifJadwal = val);
-                _updateNotificationSetting('schedule_confirmation', val);
+                _updateNotificationSetting(
+                  'schedule_confirmation',
+                  val,
+                  () => setState(() => _notifJadwal = previous),
+                );
               },
             ),
             _buildSwitchTile(
               title: 'Perangkat Offline',
               value: _notifOffline,
               onChanged: (val) {
+                final previous = _notifOffline;
                 setState(() => _notifOffline = val);
-                _updateNotificationSetting('offline_alert', val);
+                _updateNotificationSetting(
+                  'offline_alert',
+                  val,
+                  () => setState(() => _notifOffline = previous),
+                );
               },
             ),
           ],

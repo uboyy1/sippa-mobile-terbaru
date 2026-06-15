@@ -45,7 +45,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   int _selectedJenis = 0;
 
   static const int _stepAmount = 50;
-  static const int _minAmount = 50;
+  static const int _minAmount = 0;
   int _feedLimit = 500;
   int _waterLimit = 500;
 
@@ -53,7 +53,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   int _volumeAir = 500;
   double _feedAmountGram = 0;
   double _waterAmountMl = 0;
-  bool _isStatusLoaded = false;
   late final DatabaseReference _statusRef;
   late final DatabaseReference _settingsRef;
 
@@ -153,21 +152,11 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   // ============================================================
   int _normalizeAmount(int value, int max) {
     if (max <= _minAmount) return _minAmount;
-    if (value >= max) return max;
-    final clamped = value.clamp(_minAmount, max);
-    final stepped = ((clamped / _stepAmount).round() * _stepAmount).toInt();
-    return stepped.clamp(_minAmount, max).toInt();
+    return value.clamp(_minAmount, max).toInt();
   }
 
   int _normalizePakan(int value) => _normalizeAmount(value, _feedLimit);
   int _normalizeAir(int value) => _normalizeAmount(value, _waterLimit);
-
-  int _normalizeSelectedAmount(int value, int maxAdd) {
-    if (maxAdd < _minAmount) return _minAmount;
-    return _normalizeAmount(value, maxAdd);
-  }
-
-  int _normalizeMaxAdd(int value) => value < _minAmount ? 0 : value;
 
   int _incrementStepValue(int value, int max) {
     if (value >= max) return max;
@@ -203,23 +192,14 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
   double get _waterProgress => (_waterAmountMl / _waterLimit).clamp(0.0, 1.0);
   int get _feedPercent => (_feedProgress * 100).round();
   int get _waterPercent => (_waterProgress * 100).round();
-  int get _emptyFeedGram =>
-      (_feedLimit - _feedAmountGram).clamp(0, _feedLimit).floor();
-  int get _emptyWaterMl =>
-      (_waterLimit - _waterAmountMl).clamp(0, _waterLimit).floor();
-  int get _maxAddFeed => _normalizeMaxAdd(_emptyFeedGram);
-  int get _maxAddWater => _normalizeMaxAdd(_emptyWaterMl);
-
-  bool get _isSelectedStockLowEnough =>
-      (!_showPakan || _feedPercent <= 50) && (!_showAir || _waterPercent <= 50);
 
   bool get _isAmountAvailable {
-    if (!_isStatusLoaded) return false;
-    if (!_isSelectedStockLowEnough) return false;
-    if (_showPakan && (_maxAddFeed < _minAmount || _porsiPakan > _maxAddFeed))
+    if (_showPakan && (_porsiPakan <= 0 || _porsiPakan > _feedLimit)) {
       return false;
-    if (_showAir && (_maxAddWater < _minAmount || _volumeAir > _maxAddWater))
+    }
+    if (_showAir && (_volumeAir <= 0 || _volumeAir > _waterLimit)) {
       return false;
+    }
     return true;
   }
 
@@ -352,7 +332,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     final value = raw is num
         ? raw.toInt()
         : int.tryParse(raw?.toString() ?? '') ?? 0;
-    return value >= _minAmount ? value : fallback;
+    return value > 0 ? value : fallback;
   }
 
   void _listenSettings() {
@@ -365,8 +345,8 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
         _waterLimit = _toPositiveLimit(data['water_limit'], _waterLimit);
         _feedAmountGram = _feedAmountGram.clamp(0, _feedLimit).toDouble();
         _waterAmountMl = _waterAmountMl.clamp(0, _waterLimit).toDouble();
-        _porsiPakan = _normalizeSelectedAmount(_porsiPakan, _maxAddFeed);
-        _volumeAir = _normalizeSelectedAmount(_volumeAir, _maxAddWater);
+        _porsiPakan = _normalizePakan(_porsiPakan);
+        _volumeAir = _normalizeAir(_volumeAir);
       });
     });
   }
@@ -376,7 +356,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
       if (!mounted) return;
       final data = event.snapshot.value as Map?;
       if (data == null) {
-        setState(() => _isStatusLoaded = true);
         return;
       }
       final feed = _toScheduleUnit(data['feed_weight']).clamp(0, _feedLimit);
@@ -384,9 +363,8 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
       setState(() {
         _feedAmountGram = feed.toDouble();
         _waterAmountMl = water.toDouble();
-        _isStatusLoaded = true;
-        _porsiPakan = _normalizeSelectedAmount(_porsiPakan, _maxAddFeed);
-        _volumeAir = _normalizeSelectedAmount(_volumeAir, _maxAddWater);
+        _porsiPakan = _normalizePakan(_porsiPakan);
+        _volumeAir = _normalizeAir(_volumeAir);
       });
     });
   }
@@ -403,15 +381,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
-  }
-
-  String _stockRequirementMessage() {
-    final parts = <String>[];
-    if (_showPakan && _feedPercent > 50) parts.add('pakan $_feedPercent%');
-    if (_showAir && _waterPercent > 50) parts.add('air $_waterPercent%');
-    return 'Jadwal otomatis belum dapat dibuat karena persediaan '
-        '${parts.join(' dan ')} masih di atas 50%. '
-        'Silakan tunggu hingga stok turun sampai setengah kapasitas atau kurang.';
   }
 
   // ============================================================
@@ -602,14 +571,8 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                 child: GestureDetector(
                   onTap: () => setState(() {
                     _selectedJenis = i;
-                    _porsiPakan = _normalizeSelectedAmount(
-                      _porsiPakan,
-                      _maxAddFeed,
-                    );
-                    _volumeAir = _normalizeSelectedAmount(
-                      _volumeAir,
-                      _maxAddWater,
-                    );
+                    _porsiPakan = _normalizePakan(_porsiPakan);
+                    _volumeAir = _normalizeAir(_volumeAir);
                   }),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
@@ -663,8 +626,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
           // ── Slider Porsi Pakan ───────────────────────────
           if (_showPakan) ...[
             const SizedBox(height: 20),
-            _amountGroupTitle('Pakan', kPrimary),
-            const SizedBox(height: 12),
             _stockProgressRow(
               label: 'Sisa pakan',
               percent: _feedPercent,
@@ -712,18 +673,11 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
             const SizedBox(height: 8),
             _buildAmountSeekBar(
               value: _porsiPakan,
-              max: _maxAddFeed,
+              max: _feedLimit,
               color: kPrimary,
-              enabled: _maxAddFeed >= _minAmount,
+              enabled: _feedLimit > 0,
               onChanged: (val) {
-                final next = _normalizeSelectedAmount(val, _maxAddFeed);
-                if (val > _maxAddFeed) {
-                  _showCapacityMessage(
-                    'Jumlah yang dimasukkan melebihi kapasitas yang tersedia. '
-                    'Silakan sesuaikan dengan kapasitas kosong saat ini.',
-                  );
-                }
-                setState(() => _porsiPakan = next);
+                setState(() => _porsiPakan = _normalizePakan(val));
               },
             ),
             Padding(
@@ -732,11 +686,11 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    '50 g',
+                    '0 g',
                     style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
                   ),
                   Text(
-                    '${_maxAddFeed > 0 ? _maxAddFeed : 0} g',
+                    '$_feedLimit g',
                     style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
                   ),
                 ],
@@ -751,8 +705,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
 
           // ── Slider Volume Air ───────────────────────────
           if (_showAir) ...[
-            const SizedBox(height: 12),
-            _amountGroupTitle('Air Minum', const Color(0xFF1976D2)),
             const SizedBox(height: 12),
             _stockProgressRow(
               label: 'Sisa air minum',
@@ -801,18 +753,11 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
             const SizedBox(height: 8),
             _buildAmountSeekBar(
               value: _volumeAir,
-              max: _maxAddWater,
+              max: _waterLimit,
               color: const Color(0xFF1976D2),
-              enabled: _maxAddWater >= _minAmount,
+              enabled: _waterLimit > 0,
               onChanged: (val) {
-                final next = _normalizeSelectedAmount(val, _maxAddWater);
-                if (val > _maxAddWater) {
-                  _showCapacityMessage(
-                    'Jumlah yang dimasukkan melebihi kapasitas yang tersedia. '
-                    'Silakan sesuaikan dengan kapasitas kosong saat ini.',
-                  );
-                }
-                setState(() => _volumeAir = next);
+                setState(() => _volumeAir = _normalizeAir(val));
               },
             ),
             Padding(
@@ -821,11 +766,11 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    '50 ml',
+                    '0 ml',
                     style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
                   ),
                   Text(
-                    '${_maxAddWater > 0 ? _maxAddWater : 0} ml',
+                    '$_waterLimit ml',
                     style: TextStyle(fontSize: 11, color: kOnSurfaceVariant),
                   ),
                 ],
@@ -868,10 +813,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
               value: safeValue,
               min: _minAmount.toDouble(),
               max: usableMax.toDouble(),
-              divisions: ((usableMax - _minAmount) / _stepAmount).ceil().clamp(
-                1,
-                100,
-              ),
+              divisions: null,
               onChanged: enabled ? (val) => onChanged(val.round()) : null,
             ),
           ),
@@ -950,26 +892,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _amountGroupTitle(String label, Color color) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.18)),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w800,
-          color: color,
-        ),
-      ),
     );
   }
 
@@ -1240,11 +1162,6 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
 
   // ── Save Handler ─────────────────────────────────────────
   void _onSave() {
-    if (!_isSelectedStockLowEnough) {
-      _showCapacityMessage(_stockRequirementMessage());
-      return;
-    }
-
     // [FIX] _sanitizeOneTimeDays() dipanggil di sini (saat save),
     // bukan saat scroll drum. Ini memastikan validasi hari tetap ketat
     // tanpa merusak state pilihan user selama proses editing berlangsung.
@@ -1259,8 +1176,7 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     }
     if (!_isAmountAvailable) {
       _showCapacityMessage(
-        'Jumlah yang dimasukkan melebihi kapasitas yang tersedia. '
-        'Silakan sesuaikan dengan kapasitas kosong saat ini.',
+        'Jumlah pemberian harus lebih dari 0 dan tidak boleh melebihi kapasitas maksimum.',
       );
       return;
     }
@@ -1274,12 +1190,15 @@ class _TambahJadwalScreenState extends State<TambahJadwalScreen> {
     final result = {
       'time': time,
       'type': _typeString,
+      'pakan': _showPakan,
+      'air': _showAir,
       'repeat': _ulangiSetiapMinggu,
       'portion': _showPakan ? _porsiPakan : 0,
       'water': _showAir ? _volumeAir : 0,
       'days': List<String>.from(_hariLabel),
       'activeDays': List<bool>.from(_hariAktif),
       'active': true,
+      'isActive': true,
       'start_at': _firstRunAt()?.millisecondsSinceEpoch,
     };
 

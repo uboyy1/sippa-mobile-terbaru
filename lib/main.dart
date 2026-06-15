@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/splash_screen.dart';
 import 'screens/main_screen.dart';
+import 'services/firebase_defaults.dart';
 
 // 2. Ubah void main menjadi async agar bisa menunggu inisialisasi Firebase
 void main() async {
@@ -14,6 +15,11 @@ void main() async {
 
   // 4. Inisialisasi Firebase
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  try {
+    await ensureFirebaseDefaults();
+  } catch (_) {
+    // App tetap bisa dibuka walau default Firebase gagal disiapkan.
+  }
 
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(

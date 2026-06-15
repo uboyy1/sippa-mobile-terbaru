@@ -401,8 +401,7 @@ class _NotifikasiScreenState extends State<NotifikasiScreen> {
                                   color: onSurfaceVariant,
                                   height: 1.4,
                                 ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                                softWrap: true,
                               ),
                               const SizedBox(height: 8),
                               Text(

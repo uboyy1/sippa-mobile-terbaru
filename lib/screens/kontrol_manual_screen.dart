@@ -64,8 +64,8 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
 
   // ── Slider nilai sementara (sebelum dikirim) ─────────────
   static const int _stepAmount = 50;
-  static const int _minPortion = 50;
-  static const int _minWaterVolume = 50;
+  static const int _minPortion = 0;
+  static const int _minWaterVolume = 0;
   int _sliderPortion = 200; // gram
   int _sliderWater = 500; // ml
 
@@ -186,8 +186,8 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
       (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
   int get _emptyWaterMl =>
       (_waterLimit - _waterWeight).clamp(0, _waterLimit).floor();
-  int get _maxAddFeed => _normalizeMaxAdd(_emptyFeedGram);
-  int get _maxAddWater => _normalizeMaxAdd(_emptyWaterMl);
+  int get _maxFeedAdd => _emptyFeedGram;
+  int get _maxWaterAdd => _emptyWaterMl;
 
   double _toStockUnit(Object? raw, double limit) {
     final value = raw is num
@@ -204,17 +204,9 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     return value > 0 ? value : fallback;
   }
 
-  int _normalizeMaxAdd(int value) {
-    if (value < _minPortion) return 0;
-    return value;
-  }
-
   int _normalizeStepValue(int value, int min, int max) {
     if (max <= min) return min;
-    if (value >= max) return max;
-    final clamped = value.clamp(min, max);
-    final stepped = ((clamped / _stepAmount).round() * _stepAmount).toInt();
-    return stepped.clamp(min, max).toInt();
+    return value.clamp(min, max).toInt();
   }
 
   int _incrementStepValue(int value, int max) {
@@ -230,15 +222,11 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   }
 
   int _normalizePortion(int value) {
-    final max = _maxAddFeed >= _minPortion ? _maxAddFeed : _minPortion;
-    return _normalizeStepValue(value, _minPortion, max);
+    return _normalizeStepValue(value, _minPortion, _maxFeedAdd);
   }
 
   int _normalizeWaterVolume(int value) {
-    final max = _maxAddWater >= _minWaterVolume
-        ? _maxAddWater
-        : _minWaterVolume;
-    return _normalizeStepValue(value, _minWaterVolume, max);
+    return _normalizeStepValue(value, _minWaterVolume, _maxWaterAdd);
   }
 
   Future<void> _setFeedPortion(int value) async {
@@ -289,9 +277,34 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   }
 
   // ── Aksi: Beri Pakan ──────────────────────────────────────
+  void _showManualMessage(String message, {Color color = kPrimary}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   Future<void> _onBeriPakan() async {
     if (!_isDeviceConnected || _isLoadingPakan) return;
-    if (_maxAddFeed < _minPortion || _sliderPortion > _maxAddFeed) return;
+    if (_sliderPortion <= 0) {
+      _showManualMessage('Porsi pakan harus lebih dari 0 gram.');
+      return;
+    }
+    if (_sliderPortion > _emptyFeedGram) {
+      _showManualMessage(
+        'Porsi ${_sliderPortion}g melebihi ruang kosong pakan ${_emptyFeedGram}g.',
+      );
+      return;
+    }
 
     await _pakanBtnController.forward();
     await _pakanBtnController.reverse();
@@ -333,7 +346,20 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   // ── Aksi: Beri Air ────────────────────────────────────────
   Future<void> _onBeriAir() async {
     if (!_isDeviceConnected || _isLoadingAir) return;
-    if (_maxAddWater < _minWaterVolume || _sliderWater > _maxAddWater) return;
+    if (_sliderWater <= 0) {
+      _showManualMessage(
+        'Volume air harus lebih dari 0 ml.',
+        color: const Color(0xFF1976D2),
+      );
+      return;
+    }
+    if (_sliderWater > _emptyWaterMl) {
+      _showManualMessage(
+        'Volume ${_sliderWater}ml melebihi ruang kosong air ${_emptyWaterMl}ml.',
+        color: const Color(0xFF1976D2),
+      );
+      return;
+    }
 
     await _airBtnController.forward();
     await _airBtnController.reverse();
@@ -476,7 +502,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
     required ValueChanged<int> onChanged,
     required ValueChanged<int> onChangeEnd,
   }) {
-    final safeMax = max <= min ? min + _stepAmount : max;
+    final safeMax = max < min ? min : max;
     final safeValue = value.clamp(min, safeMax).toDouble();
     final canDecrease = enabled && value > min;
     final canIncrease = enabled && value < max;
@@ -502,7 +528,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
               value: safeValue,
               min: min.toDouble(),
               max: safeMax.toDouble(),
-              divisions: ((safeMax - min) / _stepAmount).ceil().clamp(1, 100),
+              divisions: null,
               onChanged: enabled ? (val) => onChanged(val.round()) : null,
               onChangeEnd: enabled ? (val) => onChangeEnd(val.round()) : null,
             ),
@@ -543,6 +569,12 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   }
 
   Widget _buildBeriPakanCard() {
+    final canSendFeed =
+        !_isLoadingPakan &&
+        _isDeviceConnected &&
+        _sliderPortion > 0 &&
+        _sliderPortion <= _maxFeedAdd;
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -664,9 +696,9 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           _buildSeekBarWithButtons(
             value: _sliderPortion,
             min: _minPortion,
-            max: _maxAddFeed >= _minPortion ? _maxAddFeed : _minPortion,
+            max: _maxFeedAdd,
             color: kPrimary,
-            enabled: !_isLoadingPakan && _maxAddFeed >= _minPortion,
+            enabled: !_isLoadingPakan && _maxFeedAdd > 0,
             onChanged: (val) {
               setState(() => _sliderPortion = _normalizePortion(val));
             },
@@ -678,14 +710,14 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '50g',
+                  '0g',
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     color: kOnSurfaceVariant,
                   ),
                 ),
                 Text(
-                  '${_maxAddFeed > 0 ? _maxAddFeed : 0}g',
+                  '${_maxFeedAdd}g',
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     color: kOnSurfaceVariant,
@@ -701,18 +733,13 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           ScaleTransition(
             scale: _pakanBtnScale,
             child: GestureDetector(
-              onTap:
-                  _isLoadingPakan ||
-                      !_isDeviceConnected ||
-                      _maxAddFeed < _minPortion
-                  ? null
-                  : _onBeriPakan,
+              onTap: canSendFeed ? _onBeriPakan : null,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 height: 56,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: _isLoadingPakan || !_isDeviceConnected
+                    colors: !canSendFeed
                         ? [
                             kPrimary.withOpacity(0.4),
                             kPrimaryContainer.withOpacity(0.4),
@@ -722,7 +749,7 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
                     end: Alignment.centerRight,
                   ),
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: _isLoadingPakan || !_isDeviceConnected
+                  boxShadow: !canSendFeed
                       ? []
                       : [
                           BoxShadow(
@@ -773,6 +800,11 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
   // ── Beri Air Card ────────────────────────────────────────
   Widget _buildBeriAirCard() {
     const blueColor = Color(0xFF1976D2);
+    final canSendWater =
+        !_isLoadingAir &&
+        _isDeviceConnected &&
+        _sliderWater > 0 &&
+        _sliderWater <= _maxWaterAdd;
 
     return Container(
       padding: const EdgeInsets.all(24),
@@ -896,11 +928,9 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           _buildSeekBarWithButtons(
             value: _sliderWater,
             min: _minWaterVolume,
-            max: _maxAddWater >= _minWaterVolume
-                ? _maxAddWater
-                : _minWaterVolume,
+            max: _maxWaterAdd,
             color: blueColor,
-            enabled: !_isLoadingAir && _maxAddWater >= _minWaterVolume,
+            enabled: !_isLoadingAir && _maxWaterAdd > 0,
             onChanged: (val) {
               setState(() => _sliderWater = _normalizeWaterVolume(val));
             },
@@ -912,14 +942,14 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '50ml',
+                  '0ml',
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     color: kOnSurfaceVariant,
                   ),
                 ),
                 Text(
-                  '${_maxAddWater > 0 ? _maxAddWater : 0}ml',
+                  '${_maxWaterAdd}ml',
                   style: GoogleFonts.inter(
                     fontSize: 10,
                     color: kOnSurfaceVariant,
@@ -935,21 +965,14 @@ class _KontrolManualScreenState extends State<KontrolManualScreen>
           ScaleTransition(
             scale: _airBtnScale,
             child: GestureDetector(
-              onTap:
-                  _isLoadingAir ||
-                      !_isDeviceConnected ||
-                      _maxAddWater < _minWaterVolume
-                  ? null
-                  : _onBeriAir,
+              onTap: canSendWater ? _onBeriAir : null,
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 height: 56,
                 decoration: BoxDecoration(
-                  color: _isLoadingAir || !_isDeviceConnected
-                      ? blueColor.withOpacity(0.4)
-                      : blueColor,
+                  color: !canSendWater ? blueColor.withOpacity(0.4) : blueColor,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: _isLoadingAir || !_isDeviceConnected
+                  boxShadow: !canSendWater
                       ? []
                       : [
                           BoxShadow(

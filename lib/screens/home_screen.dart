@@ -32,6 +32,8 @@ class _HomeScreenState extends State<HomeScreen> {
   static const Color onSurface = Color(0xFF1B1C1C);
   static const Color onSurfaceVariant = Color(0xFF5B403D);
   static const Color outlineVariant = Color(0xFFE4BEBA);
+  static const double _idealTemperatureMin = 22;
+  static const double _idealTemperatureMax = 32;
 
   // ── Firebase state ──────────────────────────────────────
   late final DatabaseReference _statusRef;
@@ -49,7 +51,13 @@ class _HomeScreenState extends State<HomeScreen> {
   double _waterWeight = 0;
   double _feedLimit = 500;
   double _waterLimit = 500;
+  int _fillPercent = 100;
+  int _refillPercent = 10;
   bool _stockAlertEnabled = true;
+  bool _temperatureAlertEnabled = true;
+  bool _scheduleConfirmationEnabled = true;
+  bool _offlineAlertEnabled = true;
+  bool _settingsLoaded = false;
   bool _isLoading = true;
   int _unreadNotifications = 0;
   List<Map<String, dynamic>> _todaySchedules = [];
@@ -58,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<DatabaseEvent>? _sensorHistorySubscription;
   bool _isRecordingStockAlerts = false;
   bool _pendingStockAlertCheck = false;
+  DateTime? _lastStatusSeenAt;
 
   // Untuk grafik: simpan history suhu & kelembaban per jam dari Firebase.
   final List<FlSpot> _suhuSpots = [];
@@ -88,6 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _listenSensorHistoryForToday();
       _listenSchedulesOnce();
       _refreshTodayRunsOnce();
+      unawaited(_recordOfflineEventIfNeeded());
     });
   }
 
@@ -115,18 +125,21 @@ class _HomeScreenState extends State<HomeScreen> {
             data['humidity'] ?? data['kelembaban'] ?? data['hum'],
           ) ??
           0;
+      final statusSeenAt = _statusSeenAt(data);
 
       setState(() {
         _temperature = newTemp;
         _humidity = newHum;
         _feedWeight = _toStockUnit(data['feed_weight'], _feedLimit);
         _waterWeight = _toStockUnit(data['water_weight'], _waterLimit);
+        _lastStatusSeenAt = statusSeenAt;
         _isLoading = false;
       });
 
       unawaited(_recordSensorSnapshot(data, newTemp, newHum));
       _recordSensorEvents(newTemp, newHum);
       _queueStockAlertCheck();
+      unawaited(_recordOfflineEventIfNeeded());
     });
   }
 
@@ -139,13 +152,25 @@ class _HomeScreenState extends State<HomeScreen> {
 
       setState(() {
         _stockAlertEnabled = notifications?['stock_alert'] != false;
+        _temperatureAlertEnabled = notifications?['temperature_alert'] != false;
+        _scheduleConfirmationEnabled =
+            notifications?['schedule_confirmation'] != false;
+        _offlineAlertEnabled = notifications?['offline_alert'] != false;
         _feedLimit = _toPositiveLimit(data['feed_limit'], _feedLimit);
         _waterLimit = _toPositiveLimit(data['water_limit'], _waterLimit);
+        _fillPercent = _toPercentValue(data['fill_percent'], _fillPercent);
+        _refillPercent = _toPercentValue(
+          data['refill_percent'],
+          _refillPercent,
+        );
         _feedWeight = _feedWeight.clamp(0, _feedLimit).toDouble();
         _waterWeight = _waterWeight.clamp(0, _waterLimit).toDouble();
+        _settingsLoaded = true;
       });
       _syncTodayRuns(_todaySchedules);
+      _recordCompletedSchedules(_todayRunStatus);
       _queueStockAlertCheck();
+      unawaited(_recordOfflineEventIfNeeded());
     });
   }
 
@@ -171,6 +196,13 @@ class _HomeScreenState extends State<HomeScreen> {
     return value > 0 ? value : fallback;
   }
 
+  int _toPercentValue(Object? raw, int fallback) {
+    final value = raw is num
+        ? raw.toInt()
+        : int.tryParse(raw?.toString() ?? '') ?? fallback;
+    return value.clamp(0, 100).toInt();
+  }
+
   DateTime _sensorTimestamp(Map data) {
     final timestamp =
         data['timestamp'] ??
@@ -182,6 +214,15 @@ class _HomeScreenState extends State<HomeScreen> {
     return DateFormat('yyyy-MM-dd').format(parsed) == _todayDateKey
         ? parsed
         : _nowWita;
+  }
+
+  DateTime _statusSeenAt(Map data) {
+    final timestamp =
+        data['timestamp'] ??
+        data['updated_at'] ??
+        data['last_update'] ??
+        data['last_updated'];
+    return _parseFirebaseTimestamp(timestamp) ?? _nowWita;
   }
 
   Future<void> _recordSensorSnapshot(
@@ -271,6 +312,29 @@ class _HomeScreenState extends State<HomeScreen> {
     return double.tryParse(raw?.toString() ?? '');
   }
 
+  int _toIntValue(Object? raw) {
+    if (raw is num) return raw.toInt();
+    return int.tryParse(raw?.toString() ?? '') ?? 0;
+  }
+
+  String _scheduleTypeFromData(Map<String, dynamic> data) {
+    final rawType = data['type']?.toString();
+    final portion = _toIntValue(data['portion']);
+    final water = _toIntValue(data['water']);
+    if (rawType == 'pakan_air' || rawType == 'pakan' || rawType == 'air') {
+      if (rawType == 'pakan' && water > 0) {
+        return portion > 0 ? 'pakan_air' : 'air';
+      }
+      return rawType!;
+    }
+
+    final hasPakan = data['pakan'] == true || portion > 0;
+    final hasAir = data['air'] == true || water > 0;
+    if (hasPakan && hasAir) return 'pakan_air';
+    if (hasAir) return 'air';
+    return 'pakan';
+  }
+
   bool _isScheduleDue(String time) {
     final parts = time.split(':');
     final hour = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 0;
@@ -298,20 +362,50 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   bool _shouldCancelSchedule(Map<String, dynamic> schedule) {
-    final pakan = schedule['pakan'] == true;
-    final air = schedule['air'] == true;
-    return (pakan && _feedPercent() > 50) || (air && _waterPercent() > 50);
+    return _scheduleCancelReasons(schedule).isNotEmpty;
   }
 
   String _cancelReason(Map<String, dynamic> schedule) {
+    return _scheduleCancelReasons(schedule).join(' dan ');
+  }
+
+  List<String> _scheduleCancelReasons(Map<String, dynamic> schedule) {
     final reasons = <String>[];
-    if (schedule['pakan'] == true && _feedPercent() > 50) {
-      reasons.add('pakan ${_feedPercent()}%');
+    if (schedule['pakan'] == true) {
+      final portion = _toIntValue(schedule['portion']);
+      final emptyFeed = (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
+      if (_feedPercent() > 50) {
+        reasons.add('stok pakan ${_feedPercent()}% masih di atas 50%');
+      } else if (portion <= 0) {
+        reasons.add('jumlah pakan belum diatur');
+      } else if (portion > emptyFeed) {
+        reasons.add('pakan ${portion}g melebihi ruang kosong ${emptyFeed}g');
+      }
     }
-    if (schedule['air'] == true && _waterPercent() > 50) {
-      reasons.add('air ${_waterPercent()}%');
+    if (schedule['air'] == true) {
+      final water = _toIntValue(schedule['water']);
+      final emptyWater = (_waterLimit - _waterWeight)
+          .clamp(0, _waterLimit)
+          .floor();
+      if (_waterPercent() > 50) {
+        reasons.add('stok air ${_waterPercent()}% masih di atas 50%');
+      } else if (water <= 0) {
+        reasons.add('jumlah air belum diatur');
+      } else if (water > emptyWater) {
+        reasons.add('air ${water}ml melebihi ruang kosong ${emptyWater}ml');
+      }
     }
-    return reasons.join(' dan ');
+    return reasons;
+  }
+
+  ({int portion, int water}) _scheduleRunAmounts(
+    Map<String, dynamic> schedule,
+  ) {
+    final portion = schedule['pakan'] == true
+        ? _toIntValue(schedule['portion'])
+        : 0;
+    final water = schedule['air'] == true ? _toIntValue(schedule['water']) : 0;
+    return (portion: portion, water: water);
   }
 
   Future<void> _listenSchedulesOnce() async {
@@ -357,25 +451,20 @@ class _HomeScreenState extends State<HomeScreen> {
       if (jadwal['active'] != true || !activeDays[_todayIndex]) return;
       if (_startsAfterToday({'start_at': jadwal['start_at']})) return;
 
-      final type = jadwal['type']?.toString() ?? 'pakan_air';
+      final type = _scheduleTypeFromData(jadwal);
       final repeatRaw = jadwal['repeat'];
       final repeatsWeekly =
           repeatRaw == true ||
           repeatRaw == 'Setiap Minggu' ||
           repeatRaw == 'Setiap Hari';
-      final waterRaw = jadwal['water'];
-      final water = waterRaw is num
-          ? waterRaw.toInt()
-          : int.tryParse(waterRaw?.toString() ?? '') ?? 0;
-
       schedules.add({
         'id': key,
         'time': jadwal['time']?.toString() ?? '00:00',
         'repeat': repeatsWeekly ? 'Setiap Minggu' : 'Khusus',
         'pakan': type == 'pakan' || type == 'pakan_air',
         'air': type == 'air' || type == 'pakan_air',
-        'portion': (jadwal['portion'] as num?)?.toInt() ?? 0,
-        'water': water,
+        'portion': _toIntValue(jadwal['portion']),
+        'water': _toIntValue(jadwal['water']),
         'start_at': jadwal['start_at'],
       });
     });
@@ -452,13 +541,32 @@ class _HomeScreenState extends State<HomeScreen> {
               (due && !_shouldCancelSchedule(schedule)));
       final shouldCancel = !isDone && due && _shouldCancelSchedule(schedule);
       final shouldDispatch = isDone && due && existing['dispatched_at'] == null;
+      final schedulePortion = _toIntValue(schedule['portion']);
+      final scheduleWater = _toIntValue(schedule['water']);
+      final dispatchAmounts = _scheduleRunAmounts(schedule);
+      final runPortion = schedule['pakan'] == true
+          ? (shouldDispatch
+                ? dispatchAmounts.portion
+                : (isDone && existing.containsKey('portion')
+                      ? _toIntValue(existing['portion'])
+                      : schedulePortion))
+          : 0;
+      final runWater = schedule['air'] == true
+          ? (shouldDispatch
+                ? dispatchAmounts.water
+                : (isDone && existing.containsKey('water')
+                      ? _toIntValue(existing['water'])
+                      : scheduleWater))
+          : 0;
       await todayRef.child(id).update({
         'time': time,
         'pakan': schedule['pakan'],
         'air': schedule['air'],
-        'portion': schedule['portion'],
-        'water': schedule['water'],
-        'status': shouldCancel
+        'portion': runPortion,
+        'water': runWater,
+        'requested_portion': schedulePortion,
+        'requested_water': scheduleWater,
+        'status': shouldCancel || isCancelled
             ? 'dibatalkan'
             : (isDone ? 'selesai' : 'menunggu'),
         'done': isDone,
@@ -474,7 +582,20 @@ class _HomeScreenState extends State<HomeScreen> {
       if (shouldCancel) {
         await _recordCancelledSchedule(id, schedule, time);
       } else if (shouldDispatch) {
-        await _dispatchAutomaticSchedule(schedule);
+        await _dispatchAutomaticSchedule(
+          schedule,
+          portion: runPortion,
+          water: runWater,
+        );
+        await _recordCompletedSchedule(
+          id: id,
+          time: time,
+          pakan: schedule['pakan'] == true,
+          air: schedule['air'] == true,
+          portion: runPortion,
+          water: runWater,
+          timestamp: existing['completed_at'] ?? ServerValue.timestamp,
+        );
       }
       if ((shouldCancel || isDone) && schedule['repeat'] != 'Setiap Minggu') {
         await _schedulesRef.child(id).update({'active': false});
@@ -482,22 +603,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _dispatchAutomaticSchedule(Map<String, dynamic> schedule) async {
+  Future<void> _dispatchAutomaticSchedule(
+    Map<String, dynamic> schedule, {
+    required int portion,
+    required int water,
+  }) async {
     final updates = <String, Object?>{};
     if (schedule['pakan'] == true) {
-      final emptyFeed = (_feedLimit - _feedWeight).clamp(0, _feedLimit).floor();
-      updates['portion'] = ((schedule['portion'] as num?)?.toInt() ?? 0)
-          .clamp(0, emptyFeed)
-          .toInt();
+      updates['portion'] = portion;
       updates['manual_feed'] = true;
     }
     if (schedule['air'] == true) {
-      final emptyWater = (_waterLimit - _waterWeight)
-          .clamp(0, _waterLimit)
-          .floor();
-      updates['water_volume'] = ((schedule['water'] as num?)?.toInt() ?? 0)
-          .clamp(0, emptyWater)
-          .toInt();
+      updates['water_volume'] = water;
       updates['manual_water'] = true;
     }
     if (updates.isNotEmpty) {
@@ -556,8 +673,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final pakan = schedule['pakan'] == true;
     final air = schedule['air'] == true;
     final label = pakan && air ? 'pakan dan air' : (pakan ? 'pakan' : 'air');
+    final reason = _cancelReason(schedule);
     final desc =
-        'Jadwal pemberian $label pukul $time dibatalkan karena persediaan ${_cancelReason(schedule)} masih mencukupi (di atas 50%).';
+        'Jadwal pemberian $label pukul $time dibatalkan karena $reason.';
     final key = 'jadwal_batal_${_todayDateKey}_$id';
 
     await _logsRef.child(key).update({
@@ -568,7 +686,9 @@ class _HomeScreenState extends State<HomeScreen> {
       'desc': desc,
     });
     final notificationSnapshot = await _notificationsRef.child(key).get();
-    if (!notificationSnapshot.exists) {
+    if (_settingsLoaded &&
+        _scheduleConfirmationEnabled &&
+        !notificationSnapshot.exists) {
       await _notificationsRef.child(key).set({
         'timestamp': ServerValue.timestamp,
         'type': 'jadwal_dibatalkan',
@@ -596,68 +716,117 @@ class _HomeScreenState extends State<HomeScreen> {
           run['time']?.toString() ?? schedule?['time']?.toString() ?? '';
       final pakan = run['pakan'] == true || schedule?['pakan'] == true;
       final air = run['air'] == true || schedule?['air'] == true;
-      final portion =
-          (run['portion'] as num?)?.toInt() ??
-          (schedule?['portion'] as num?)?.toInt() ??
-          0;
-      final water =
-          (run['water'] as num?)?.toInt() ??
-          (schedule?['water'] as num?)?.toInt() ??
-          0;
-      final parts = <String>[
-        if (pakan) '${portion}g pakan',
-        if (air) '${water}ml air',
-      ];
-      final key = 'jadwal_${_todayDateKey}_${entry.key}';
-      await _logsRef.child(key).update({
-        'timestamp': run['completed_at'] ?? ServerValue.timestamp,
-        'type': pakan && air
-            ? 'pakan_air_otomatis'
-            : (pakan ? 'pakan_otomatis' : 'air_otomatis'),
-        'status': 'sukses',
-        'title': 'Jadwal $time selesai',
+      final portion = run.containsKey('portion')
+          ? _toIntValue(run['portion'])
+          : _toIntValue(schedule?['portion']);
+      final water = run.containsKey('water')
+          ? _toIntValue(run['water'])
+          : _toIntValue(schedule?['water']);
+
+      await _recordCompletedSchedule(
+        id: entry.key,
+        time: time,
+        pakan: pakan,
+        air: air,
+        portion: portion,
+        water: water,
+        timestamp: run['completed_at'] ?? ServerValue.timestamp,
+      );
+    }
+  }
+
+  Future<void> _recordCompletedSchedule({
+    required String id,
+    required String time,
+    required bool pakan,
+    required bool air,
+    required int portion,
+    required int water,
+    Object? timestamp,
+  }) async {
+    final parts = <String>[
+      if (pakan) '${portion}g pakan',
+      if (air) '${water}ml air',
+    ];
+    final type = pakan && air
+        ? 'pakan_air_otomatis'
+        : (pakan ? 'pakan_otomatis' : 'air_otomatis');
+    final label = pakan && air ? 'Pakan & Air' : (pakan ? 'Pakan' : 'Air');
+    final title = 'Jadwal $label $time selesai';
+    final desc = parts.isEmpty
+        ? 'Pemberian otomatis selesai.'
+        : 'Pemberian ${parts.join(' dan ')} selesai sesuai jadwal.';
+    final key = 'jadwal_${_todayDateKey}_$id';
+    final eventTimestamp = timestamp ?? ServerValue.timestamp;
+
+    await _logsRef.child(key).update({
+      'timestamp': eventTimestamp,
+      'type': type,
+      'status': 'sukses',
+      'title': title,
+      'desc': desc,
+      'schedule_id': id,
+      'date': _todayDateKey,
+      'pakan': pakan,
+      'air': air,
+      'portion': portion,
+      'water': water,
+    });
+    final notificationSnapshot = await _notificationsRef.child(key).get();
+    if (_scheduleConfirmationEnabled && !notificationSnapshot.exists) {
+      await _notificationsRef.child(key).set({
+        'timestamp': eventTimestamp,
+        'type': type,
+        'target': 'riwayat',
+        'title': title,
         'desc': parts.isEmpty
             ? 'Pemberian otomatis selesai.'
-            : 'Pemberian ${parts.join(' dan ')} selesai sesuai jadwal.',
+            : '${parts.join(' dan ')} berhasil diberikan sesuai jadwal.',
+        'schedule_id': id,
+        'date': _todayDateKey,
+        'pakan': pakan,
+        'air': air,
+        'portion': portion,
+        'water': water,
+        'read': false,
       });
-      final notificationSnapshot = await _notificationsRef.child(key).get();
-      if (!notificationSnapshot.exists) {
-        await _notificationsRef.child(key).set({
-          'timestamp': run['completed_at'] ?? ServerValue.timestamp,
-          'type': 'jadwal_selesai',
-          'target': 'riwayat',
-          'title': 'Jadwal $time Selesai',
-          'desc': parts.isEmpty
-              ? 'Pemberian otomatis selesai.'
-              : '${parts.join(' dan ')} berhasil diberikan.',
-          'read': false,
-        });
-      }
     }
   }
 
   Future<void> _recordSensorEvents(double temperature, double humidity) async {
     final hourKey = DateFormat('yyyyMMdd_HH').format(_nowWita);
-    if (temperature > 29 || temperature < 22) {
+    if (temperature > _idealTemperatureMax ||
+        temperature < _idealTemperatureMin) {
       final key = 'sensor_suhu_$hourKey';
+      final desc =
+          'Suhu kandang ${_fmtNum(temperature)} derajat C di luar batas ideal '
+          '${_fmtNum(_idealTemperatureMin)}-${_fmtNum(_idealTemperatureMax)} derajat C.';
       await _logsRef.child(key).update({
         'timestamp': ServerValue.timestamp,
         'type': 'sensor_suhu',
         'status': 'peringatan',
         'title': 'Peringatan Suhu',
-        'desc': 'Suhu kandang ${_fmtNum(temperature)}°C di luar batas ideal.',
+        'desc': desc,
         'value': temperature,
         'unit': '°C',
+        'ideal_min': _idealTemperatureMin,
+        'ideal_max': _idealTemperatureMax,
       });
       final notificationSnapshot = await _notificationsRef.child(key).get();
-      if (!notificationSnapshot.exists) {
+      if (_settingsLoaded &&
+          _temperatureAlertEnabled &&
+          !notificationSnapshot.exists) {
         await _notificationsRef.child(key).set({
           'timestamp': ServerValue.timestamp,
           'type': 'suhu',
           'target': 'dashboard',
           'title': 'Peringatan Suhu',
-          'desc': 'Suhu kandang ${_fmtNum(temperature)}°C di luar batas ideal.',
+          'desc': desc,
           'read': false,
+          'value': temperature,
+          'unit': '°C',
+          'ideal_min': _idealTemperatureMin,
+          'ideal_max': _idealTemperatureMax,
         });
       }
     }
@@ -673,7 +842,9 @@ class _HomeScreenState extends State<HomeScreen> {
         'unit': '%',
       });
       final notificationSnapshot = await _notificationsRef.child(key).get();
-      if (!notificationSnapshot.exists) {
+      if (_settingsLoaded &&
+          _temperatureAlertEnabled &&
+          !notificationSnapshot.exists) {
         await _notificationsRef.child(key).set({
           'timestamp': ServerValue.timestamp,
           'type': 'kelembaban',
@@ -687,8 +858,48 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _recordOfflineEventIfNeeded() async {
+    if (!_settingsLoaded) return;
+    final lastSeen = _lastStatusSeenAt;
+    if (lastSeen == null) return;
+
+    final offlineDuration = _nowWita.difference(lastSeen);
+    if (offlineDuration.inMinutes < 5) return;
+
+    final key =
+        'perangkat_offline_${DateFormat('yyyyMMdd_HH').format(_nowWita)}';
+    final lastSeenText = DateFormat('HH:mm', 'id').format(lastSeen);
+    final desc =
+        'Perangkat tidak mengirim data sensor selama ${offlineDuration.inMinutes} menit. '
+        'Data terakhir diterima pukul $lastSeenText WITA.';
+
+    await _logsRef.child(key).update({
+      'timestamp': ServerValue.timestamp,
+      'type': 'perangkat_offline',
+      'status': 'peringatan',
+      'title': 'Perangkat Offline',
+      'desc': desc,
+      'minutes_offline': offlineDuration.inMinutes,
+      'last_seen_at': DateFormat('yyyy-MM-dd HH:mm:ss').format(lastSeen),
+    });
+
+    if (!_offlineAlertEnabled) return;
+    final notificationSnapshot = await _notificationsRef.child(key).get();
+    if (!notificationSnapshot.exists) {
+      await _notificationsRef.child(key).set({
+        'timestamp': ServerValue.timestamp,
+        'type': 'perangkat_offline',
+        'target': 'dashboard',
+        'title': 'Perangkat Offline',
+        'desc': desc,
+        'read': false,
+        'minutes_offline': offlineDuration.inMinutes,
+        'last_seen_at': DateFormat('yyyy-MM-dd HH:mm:ss').format(lastSeen),
+      });
+    }
+  }
+
   void _queueStockAlertCheck() {
-    if (!_stockAlertEnabled) return;
     if (_isRecordingStockAlerts) {
       _pendingStockAlertCheck = true;
       return;
@@ -696,8 +907,107 @@ class _HomeScreenState extends State<HomeScreen> {
     unawaited(_recordStockAlerts());
   }
 
+  Future<int> _dispatchAutoRefill({
+    required String stateKey,
+    required String type,
+    required String title,
+    required String subject,
+    required double amount,
+    required double limit,
+    required int fillPercent,
+    required int refillPercent,
+    required String unit,
+    required bool notify,
+  }) async {
+    final targetAmount = (limit * (fillPercent / 100))
+        .clamp(0, limit)
+        .toDouble();
+    final refillAmount = (targetAmount - amount).clamp(0, limit).ceil();
+    if (refillAmount <= 0) return 0;
+
+    final isFeed = stateKey == 'pakan';
+    final triggerKey = isFeed ? 'manual_feed' : 'manual_water';
+    final actionType = isFeed ? 'auto_refill_pakan' : 'auto_refill_air';
+    final key =
+        'auto_refill_${stateKey}_${DateFormat('yyyyMMdd_HHmmss').format(_nowWita)}';
+
+    final controlSnapshot = await _controlRef.get();
+    final control = controlSnapshot.value is Map
+        ? Map<String, dynamic>.from(controlSnapshot.value as Map)
+        : <String, dynamic>{};
+    if (control[triggerKey] == true) {
+      await _controlRef.update({triggerKey: false});
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+
+    await _controlRef.update({
+      if (isFeed) ...{
+        'portion': refillAmount,
+        'feed_amount': refillAmount,
+        'pakan_amount': refillAmount,
+      } else ...{
+        'water_volume': refillAmount,
+        'water_amount': refillAmount,
+        'air_volume': refillAmount,
+      },
+      triggerKey: true,
+      'auto_refill_target': stateKey,
+      'auto_refill_amount': refillAmount,
+      'auto_refill_request_id': key,
+      'last_command': actionType,
+      'updated_at': ServerValue.timestamp,
+    });
+
+    final amountText = _formatStockAmount(amount);
+    final limitText = _formatStockAmount(limit);
+    final targetText = _formatStockAmount(targetAmount);
+    final refillText = _formatStockAmount(refillAmount.toDouble());
+    final desc =
+        'Stok $subject berada di bawah $refillPercent%, sistem otomatis mengisi $refillText $unit '
+        'agar mencapai $fillPercent% ($targetText $unit) dari kapasitas '
+        '$limitText $unit. Sisa sebelumnya $amountText $unit.';
+
+    await _logsRef.child(key).update({
+      'timestamp': ServerValue.timestamp,
+      'type': actionType,
+      'source_type': type,
+      'status': 'sukses',
+      'title': title,
+      'desc': desc,
+      'value': refillAmount,
+      'previous_value': amount,
+      'limit': limit,
+      'fill_percent': fillPercent,
+      'refill_percent': refillPercent,
+      'target_value': targetAmount,
+      'unit': unit,
+      'auto_refill': true,
+    });
+    if (notify) {
+      await _notificationsRef.child(key).set({
+        'timestamp': ServerValue.timestamp,
+        'type': actionType,
+        'source_type': type,
+        'target': 'riwayat',
+        'title': title,
+        'desc': desc,
+        'read': false,
+        'value': refillAmount,
+        'previous_value': amount,
+        'limit': limit,
+        'fill_percent': fillPercent,
+        'refill_percent': refillPercent,
+        'target_value': targetAmount,
+        'unit': unit,
+        'auto_refill': true,
+      });
+    }
+
+    return refillAmount;
+  }
+
   Future<void> _recordStockAlerts() async {
-    if (!_stockAlertEnabled || _isRecordingStockAlerts) return;
+    if (_isRecordingStockAlerts) return;
     _isRecordingStockAlerts = true;
     try {
       final alerts = [
@@ -705,6 +1015,7 @@ class _HomeScreenState extends State<HomeScreen> {
           stateKey: 'pakan',
           type: 'stok_pakan',
           title: 'Peringatan Pakan Rendah',
+          autoTitle: 'Isi Ulang Pakan Otomatis',
           subject: 'pakan',
           refillTarget: 'pakan',
           amount: _feedWeight,
@@ -716,6 +1027,7 @@ class _HomeScreenState extends State<HomeScreen> {
           stateKey: 'air',
           type: 'stok_air',
           title: 'Peringatan Air Rendah',
+          autoTitle: 'Isi Ulang Air Otomatis',
           subject: 'air',
           refillTarget: 'air',
           amount: _waterWeight,
@@ -727,7 +1039,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       for (final alert in alerts) {
         if (alert.limit <= 0) continue;
-        final threshold = alert.limit * 0.10;
+        final threshold = alert.limit * (_refillPercent / 100);
         final isLow = alert.amount <= threshold;
         final stateRef = _notificationStateRef.child(alert.stateKey);
         final stateSnapshot = await stateRef.get();
@@ -736,22 +1048,86 @@ class _HomeScreenState extends State<HomeScreen> {
             : <String, dynamic>{};
         final wasLow = state['is_low'] == true;
         final lastLimit = _toDoubleValue(state['limit']) ?? 0;
+        final lastFillPercent = _toIntValue(state['fill_percent']);
+        final lastRefillPercent = _toIntValue(state['refill_percent']);
         final sameLimit = (lastLimit - alert.limit).abs() < 0.001;
+        final sameFillPercent = lastFillPercent == _fillPercent;
+        final sameRefillPercent = lastRefillPercent == _refillPercent;
+        final lastAlertKey = state['last_alert_key']?.toString() ?? '';
+        final lastAlertAt = _parseFirebaseTimestamp(state['last_alert_at']);
+        final alertIsFresh =
+            lastAlertAt != null && _nowWita.difference(lastAlertAt).inHours < 1;
+        final autoRefillAt = _parseFirebaseTimestamp(state['auto_refill_at']);
+        final autoRefillIsFresh =
+            autoRefillAt != null &&
+            _nowWita.difference(autoRefillAt).inMinutes < 1;
+        final autoRefillRequested =
+            state['auto_refill_requested'] == true &&
+            sameLimit &&
+            sameFillPercent &&
+            sameRefillPercent &&
+            autoRefillIsFresh;
 
         if (!isLow) {
           if (wasLow) {
             await stateRef.update({
               'is_low': false,
+              'auto_refill_requested': false,
               'amount': alert.amount,
               'limit': alert.limit,
               'threshold': threshold,
+              'fill_percent': _fillPercent,
+              'refill_percent': _refillPercent,
               'recovered_at': ServerValue.timestamp,
             });
           }
           continue;
         }
 
-        if (wasLow && sameLimit) continue;
+        if (!autoRefillRequested) {
+          final refillAmount = await _dispatchAutoRefill(
+            stateKey: alert.stateKey,
+            type: alert.type,
+            title: alert.autoTitle,
+            subject: alert.subject,
+            amount: alert.amount,
+            limit: alert.limit,
+            fillPercent: _fillPercent,
+            refillPercent: _refillPercent,
+            unit: alert.unit,
+            notify: _stockAlertEnabled,
+          );
+          if (refillAmount > 0) {
+            await stateRef.update({
+              'auto_refill_requested': true,
+              'auto_refill_amount': refillAmount,
+              'fill_percent': _fillPercent,
+              'refill_percent': _refillPercent,
+              'auto_refill_at': ServerValue.timestamp,
+            });
+          }
+        }
+
+        if (wasLow &&
+            sameLimit &&
+            sameFillPercent &&
+            sameRefillPercent &&
+            lastAlertKey.isNotEmpty &&
+            alertIsFresh) {
+          continue;
+        }
+
+        if (!_stockAlertEnabled) {
+          await stateRef.update({
+            'is_low': true,
+            'amount': alert.amount,
+            'limit': alert.limit,
+            'threshold': threshold,
+            'fill_percent': _fillPercent,
+            'refill_percent': _refillPercent,
+          });
+          continue;
+        }
 
         final key =
             'stok_${alert.stateKey}_${DateFormat('yyyyMMdd_HHmmss').format(_nowWita)}';
@@ -759,7 +1135,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final limitText = _formatStockAmount(alert.limit);
         final thresholdText = _formatStockAmount(threshold);
         final desc =
-            'Peringatan! Sisa ${alert.subject} berada di bawah 10% dari kapasitas maksimum. '
+            'Peringatan! Sisa ${alert.subject} berada di bawah $_refillPercent% dari kapasitas maksimum. '
             'Segera isi ulang ${alert.refillTarget} untuk memastikan sistem tetap berjalan dengan baik. '
             'Sisa $amountText ${alert.unit} dari kapasitas $limitText ${alert.unit} '
             '(ambang $thresholdText ${alert.unit}).';
@@ -773,19 +1149,23 @@ class _HomeScreenState extends State<HomeScreen> {
           'value': alert.amount,
           'limit': alert.limit,
           'threshold': threshold,
+          'fill_percent': _fillPercent,
+          'refill_percent': _refillPercent,
           'percent': alert.percent,
           'unit': alert.unit,
         });
         await _notificationsRef.child(key).set({
           'timestamp': ServerValue.timestamp,
           'type': alert.type,
-          'target': 'dashboard',
+          'target': 'riwayat',
           'title': alert.title,
           'desc': desc,
           'read': false,
           'value': alert.amount,
           'limit': alert.limit,
           'threshold': threshold,
+          'fill_percent': _fillPercent,
+          'refill_percent': _refillPercent,
           'percent': alert.percent,
           'unit': alert.unit,
         });
@@ -794,6 +1174,8 @@ class _HomeScreenState extends State<HomeScreen> {
           'amount': alert.amount,
           'limit': alert.limit,
           'threshold': threshold,
+          'fill_percent': _fillPercent,
+          'refill_percent': _refillPercent,
           'last_alert_key': key,
           'last_alert_at': ServerValue.timestamp,
         });
@@ -821,9 +1203,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // ── Status helpers ───────────────────────────────────────
   ({String label, Color color}) _temperatureStatus(double value) {
-    if (value >= 22 && value <= 25) return (label: 'Normal', color: success);
-    if (value >= 26 && value <= 29) return (label: 'Waspada', color: warning);
-    return (label: 'Bahaya', color: danger);
+    if (value < _idealTemperatureMin) return (label: 'Dingin', color: warning);
+    if (value <= _idealTemperatureMax) return (label: 'Ideal', color: success);
+    return (label: 'Panas', color: danger);
   }
 
   ({String label, Color color}) _humidityStatus(double value) {
@@ -1238,9 +1620,9 @@ class _HomeScreenState extends State<HomeScreen> {
             interval: 5,
             unit: '°',
             color: const Color(0xFFF59E0B),
-            // Zone ideal suhu: 22–29°C
-            idealMin: 22,
-            idealMax: 29,
+            // Zone ideal suhu: 22-32°C
+            idealMin: _idealTemperatureMin,
+            idealMax: _idealTemperatureMax,
           ),
           const SizedBox(height: 20),
           _lineChartCard(
@@ -1745,9 +2127,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 final run = _todayRunStatus[schedule['id']];
                 final hasPakan = schedule['pakan'] == true;
                 final hasAir = schedule['air'] == true;
+                final isDone =
+                    run?['done'] == true || run?['status'] == 'selesai';
+                final portion = isDone && run?.containsKey('portion') == true
+                    ? _toIntValue(run?['portion'])
+                    : _toIntValue(schedule['portion']);
+                final water = isDone && run?.containsKey('water') == true
+                    ? _toIntValue(run?['water'])
+                    : _toIntValue(schedule['water']);
                 final labelParts = <String>[
-                  if (hasPakan) '${schedule['portion']}g pakan',
-                  if (hasAir) '${schedule['water']}ml air',
+                  if (hasPakan) '${portion}g pakan',
+                  if (hasAir) '${water}ml air',
                 ];
 
                 return Padding(
@@ -1758,7 +2148,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     time: schedule['time']?.toString() ?? '00:00',
                     label: labelParts.join(' + '),
                     status: run?['status']?.toString() ?? 'menunggu',
-                    isDone: run?['done'] == true || run?['status'] == 'selesai',
+                    isDone: isDone,
                     isCancelled:
                         run?['cancelled'] == true ||
                         run?['status'] == 'dibatalkan',

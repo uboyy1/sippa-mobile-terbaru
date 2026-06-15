@@ -194,6 +194,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
       case 'pakan_otomatis':
       case 'pakan_air_otomatis':
       case 'pakan_manual':
+      case 'auto_refill_pakan':
         return (
           icon: isOld
               ? Icons.check_circle_outline_rounded
@@ -209,6 +210,7 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
         );
       case 'air_otomatis':
       case 'air_manual':
+      case 'auto_refill_air':
         return (
           icon: isOld
               ? Icons.check_circle_outline_rounded
@@ -244,18 +246,28 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
         return 'Pakan & Air Otomatis';
       case 'pakan_manual':
         return 'Pakan Manual';
+      case 'auto_refill_pakan':
+        return 'Isi Ulang Pakan Otomatis';
       case 'air_otomatis':
         return 'Air Otomatis';
       case 'air_manual':
         return 'Air Manual';
+      case 'auto_refill_air':
+        return 'Isi Ulang Air Otomatis';
       case 'sensor':
         return 'Sensor Lingkungan';
       case 'sensor_suhu':
         return 'Sensor Suhu';
       case 'sensor_kelembaban':
         return 'Sensor Kelembaban';
+      case 'stok_pakan':
+        return 'Stok Pakan';
+      case 'stok_air':
+        return 'Stok Air';
       case 'sistem':
         return 'Sistem Perangkat';
+      case 'perangkat_offline':
+        return 'Perangkat Offline';
       default:
         return type;
     }
@@ -279,7 +291,17 @@ class _RiwayatScreenState extends State<RiwayatScreen> {
 
   bool _isPakanAirLog(Map<String, dynamic> log) {
     final type = log['type'].toString();
-    return type.contains('pakan') || type.contains('air');
+    return const {
+      'pakan_otomatis',
+      'pakan_air_otomatis',
+      'pakan_manual',
+      'auto_refill_pakan',
+      'stok_pakan',
+      'air_otomatis',
+      'air_manual',
+      'auto_refill_air',
+      'stok_air',
+    }.contains(type);
   }
 
   String _relativeTime(Object? raw) {

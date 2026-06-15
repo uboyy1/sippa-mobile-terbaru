@@ -46,7 +46,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '1068107148433',
     projectId: 'sippa-bb964',
     authDomain: 'sippa-bb964.firebaseapp.com',
-    databaseURL: 'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+        'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'sippa-bb964.firebasestorage.app',
   );
 
@@ -55,7 +56,8 @@ class DefaultFirebaseOptions {
     appId: '1:1068107148433:android:fa46d52d073c44e24b2330',
     messagingSenderId: '1068107148433',
     projectId: 'sippa-bb964',
-    databaseURL: 'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+        'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'sippa-bb964.firebasestorage.app',
   );
 
@@ -64,7 +66,8 @@ class DefaultFirebaseOptions {
     appId: '1:1068107148433:ios:661b3e1c6961a6244b2330',
     messagingSenderId: '1068107148433',
     projectId: 'sippa-bb964',
-    databaseURL: 'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+        'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'sippa-bb964.firebasestorage.app',
     iosBundleId: 'com.example.sippaMobile',
   );
@@ -74,7 +77,8 @@ class DefaultFirebaseOptions {
     appId: '1:1068107148433:ios:661b3e1c6961a6244b2330',
     messagingSenderId: '1068107148433',
     projectId: 'sippa-bb964',
-    databaseURL: 'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+        'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'sippa-bb964.firebasestorage.app',
     iosBundleId: 'com.example.sippaMobile',
   );
@@ -85,7 +89,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '1068107148433',
     projectId: 'sippa-bb964',
     authDomain: 'sippa-bb964.firebaseapp.com',
-    databaseURL: 'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
+    databaseURL:
+        'https://sippa-bb964-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'sippa-bb964.firebasestorage.app',
   );
 }
